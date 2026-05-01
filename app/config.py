@@ -6,11 +6,11 @@ import secrets
 
 class Settings(BaseSettings):
     # ==================== DATABASE CONFIGURATION ====================
-    DB_HOST: str = Field(default="localhost", description="Database host")
+    DB_HOST: str = Field(default="mysql.railway.internal", description="Database host")
     DB_PORT: int = Field(default=3306, description="Database port")
     DB_USER: str = Field(default="root", description="Database username")
-    DB_PASSWORD: str = Field(default="password", description="Database password")
-    DB_NAME: str = Field(default="inventory_db", description="Database name")
+    DB_PASSWORD: str = Field(default="dHylhDZNHcepytUEqMoDGXjntUVgmgSn", description="Database password")
+    DB_NAME: str = Field(default="railway", description="Database name")
     DB_DRIVER: str = Field(default="mysql+pymysql", description="Database driver")
     
     # Connection Pool Settings
