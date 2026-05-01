@@ -10,7 +10,7 @@ from app.routers.batches import router as batches_router
 from app.routers.stock import router as stock_router
 from app.routers.sales import router as sales_router
 from app.routers.returns import router as returns_router
-from app.routers.purchases import router as purchases_router
+from app.routers.purchase_routes import router as purchases_router
 from app.routers.loans import router as loans_router
 from app.routers.alerts import router as alerts_router
 from app.routers.reports import router as reports_router
