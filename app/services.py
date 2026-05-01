@@ -11,12 +11,13 @@ from app.models import (
     SystemSetting, BackupRecord, SystemLog, Loan,
     Category, Unit, Batch, SaleReturn, SaleReturnItem,
     PurchaseOrder, PurchaseOrderItem, LoanPayment, LoanSummary,
-    TempItem, BusinessType, MovementType, ReturnStatus, TenantStatus, UserRole,TenantSubscription, SubscriptionPlan, Payment
+    TempItem, BusinessType, MovementType, ReturnStatus, TenantStatus, UserRole,
+    TenantSubscription, SubscriptionPlan, Payment, LoanStatus, SubscriptionStatus, PaymentStatus
 )
 from app.schemas import (
     UserCreate, SaleCreate, PurchaseCreate, StockCreate,
     CategoryCreate, UnitCreate, BatchCreate, SaleReturnCreate,
-    PurchaseOrderCreate, LoanCreate, TempItemCreate, TenantCreate,SubscriptionStatus, PaymentStatus
+    PurchaseOrderCreate, LoanCreate, TempItemCreate, TenantCreate, SubscriptionStatus, PaymentStatus
 )
 import json
 import os
@@ -30,7 +31,7 @@ pwd_context = CryptContext(
 )
 
 
-# ==================== TENANT SERVICE (NEW) ====================
+# ==================== TENANT SERVICE ====================
 class TenantService:
     @staticmethod
     def create_tenant(db: Session, tenant_data: TenantCreate, created_by: int) -> Tenant:
@@ -53,9 +54,6 @@ class TenantService:
             email=tenant_data.email,
             phone=tenant_data.phone,
             address=tenant_data.address,
-            subscription_plan=tenant_data.subscription_plan,
-            subscription_start=datetime.now(),
-            subscription_end=tenant_data.subscription_end,
             created_by=created_by,
             status=TenantStatus.ACTIVE.value
         )
@@ -169,13 +167,11 @@ class TenantService:
             "product_count": product_count,
             "sale_count": sale_count,
             "loan_count": loan_count,
-            "subscription_plan": tenant.subscription_plan,
-            "subscription_end": tenant.subscription_end,
             "status": tenant.status
         }
 
 
-# ==================== AUTH SERVICE (UPDATED) ====================
+# ==================== AUTH SERVICE ====================
 class AuthService:
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -291,7 +287,7 @@ class AuthService:
             return None
 
 
-# ==================== BRANCH SERVICE (UPDATED) ====================
+# ==================== BRANCH SERVICE ====================
 class BranchService:
     @staticmethod
     def create_branch(db: Session, branch_data, tenant_id: int) -> Branch:
@@ -327,7 +323,7 @@ class BranchService:
         return branch
 
 
-# ==================== CATEGORY SERVICE (UPDATED) ====================
+# ==================== CATEGORY SERVICE ====================
 class CategoryService:
     @staticmethod
     def create_category(db: Session, category_data: CategoryCreate, tenant_id: int) -> Category:
@@ -374,7 +370,7 @@ class CategoryService:
         return True
 
 
-# ==================== UNIT SERVICE (UPDATED) ====================
+# ==================== UNIT SERVICE ====================
 class UnitService:
     @staticmethod
     def create_unit(db: Session, unit_data: UnitCreate, tenant_id: int) -> Unit:
@@ -407,7 +403,7 @@ class UnitService:
         return unit
 
 
-# ==================== PRODUCT SERVICE (UPDATED) ====================
+# ==================== PRODUCT SERVICE ====================
 class ProductService:
     @staticmethod
     def create_product(db: Session, product_data, tenant_id: int) -> Product:
@@ -484,7 +480,7 @@ class ProductService:
         return True
 
 
-# ==================== BATCH SERVICE (UPDATED) ====================
+# ==================== BATCH SERVICE ====================
 class BatchService:
     @staticmethod
     def create_batch(db: Session, batch_data: BatchCreate, tenant_id: int) -> Batch:
@@ -546,7 +542,7 @@ class BatchService:
         return batch
 
 
-# ==================== STOCK SERVICE (UPDATED) ====================
+# ==================== STOCK SERVICE ====================
 class StockService:
     @staticmethod
     def get_stock(db: Session, branch_id: int, product_id: int, tenant_id: int) -> Optional[Stock]:
@@ -691,7 +687,7 @@ class StockService:
         return {"from_branch": from_stock, "to_branch": to_stock}
 
 
-# ==================== SALE SERVICE (UPDATED) ====================
+# ==================== SALE SERVICE ====================
 class SaleService:
     @staticmethod
     def create_sale(db: Session, sale_data: SaleCreate, user_id: int, branch_id: int, tenant_id: int) -> Sale:
@@ -798,7 +794,7 @@ class SaleService:
         ).first()
 
 
-# ==================== SALE RETURN SERVICE (UPDATED) ====================
+# ==================== SALE RETURN SERVICE ====================
 class SaleReturnService:
     @staticmethod
     def create_return(db: Session, return_data: SaleReturnCreate, user_id: int, branch_id: int, tenant_id: int) -> SaleReturn:
@@ -866,26 +862,9 @@ class SaleReturnService:
         db.commit()
         db.refresh(db_return)
         return db_return
-    
-    @staticmethod
-    def approve_return(db: Session, return_id: int, approver_id: int, tenant_id: int) -> Optional[SaleReturn]:
-        return_item = db.query(SaleReturn).filter(
-            SaleReturn.id == return_id,
-            SaleReturn.tenant_id == tenant_id
-        ).first()
-        if not return_item:
-            return None
-        
-        return_item.status = ReturnStatus.APPROVED.value
-        return_item.approved_by = approver_id
-        return_item.approved_at = datetime.now()
-        
-        db.commit()
-        db.refresh(return_item)
-        return return_item
 
 
-# ==================== PURCHASE ORDER SERVICE (UPDATED) ====================
+# ==================== PURCHASE ORDER SERVICE ====================
 class PurchaseOrderService:
     @staticmethod
     def create_purchase_order(db: Session, po_data: PurchaseOrderCreate, user_id: int, branch_id: int, tenant_id: int) -> PurchaseOrder:
@@ -904,7 +883,7 @@ class PurchaseOrderService:
             branch_id=branch_id,
             supplier=po_data.supplier,
             expected_delivery_date=po_data.expected_delivery_date,
-            status=PurchaseStatus.PENDING.value,
+            status="pending",
             subtotal=subtotal,
             tax_amount=po_data.tax_amount,
             shipping_cost=po_data.shipping_cost,
@@ -933,67 +912,9 @@ class PurchaseOrderService:
         db.commit()
         db.refresh(db_po)
         return db_po
-    
-    @staticmethod
-    def receive_purchase_order(db: Session, po_id: int, receive_data, user_id: int, tenant_id: int) -> PurchaseOrder:
-        po = db.query(PurchaseOrder).filter(
-            PurchaseOrder.id == po_id,
-            PurchaseOrder.tenant_id == tenant_id
-        ).first()
-        if not po:
-            raise ValueError("Purchase order not found")
-        
-        for receive_item in receive_data.items:
-            po_item = db.query(PurchaseOrderItem).filter(
-                PurchaseOrderItem.purchase_order_id == po_id,
-                PurchaseOrderItem.product_id == receive_item.product_id
-            ).first()
-            
-            if not po_item:
-                continue
-            
-            po_item.quantity_received = receive_item.quantity_received
-            po_item.received_at = datetime.now()
-            
-            # Create batch if needed
-            product = db.query(Product).filter(
-                Product.id == receive_item.product_id,
-                Product.tenant_id == tenant_id
-            ).first()
-            if product and product.track_batch and receive_item.batch_number:
-                batch = Batch(
-                    tenant_id=tenant_id,
-                    product_id=receive_item.product_id,
-                    branch_id=po.branch_id,
-                    batch_number=receive_item.batch_number,
-                    expiry_date=receive_item.expiry_date,
-                    quantity=receive_item.quantity_received,
-                    remaining_quantity=receive_item.quantity_received,
-                    unit_cost=po_item.unit_cost
-                )
-                db.add(batch)
-                db.flush()
-                batch_id = batch.id
-            else:
-                batch_id = None
-            
-            # Update stock
-            StockService.add_stock(
-                db, po.branch_id, receive_item.product_id,
-                receive_item.quantity_received, user_id, tenant_id,
-                f"Purchase Order #{po.order_number}",
-                batch_id=batch_id
-            )
-        
-        po.actual_delivery_date = receive_data.actual_delivery_date
-        po.status = PurchaseStatus.COMPLETED.value
-        
-        db.commit()
-        db.refresh(po)
-        return po
 
 
-# ==================== LOAN SERVICE (UPDATED) ====================
+# ==================== LOAN SERVICE ====================
 class LoanService:
     @staticmethod
     def create_loan(db: Session, loan_data: LoanCreate, user_id: int, branch_id: int, tenant_id: int) -> Loan:
@@ -1059,7 +980,7 @@ class LoanService:
             loan_id=loan_id,
             payment_number=payment_number,
             amount=payment_data.amount,
-            payment_method=payment_data.payment_method.value if hasattr(payment_data.payment_method, 'value') else payment_data.payment_method,
+            payment_method=payment_data.payment_method,
             reference_number=payment_data.reference_number,
             notes=payment_data.notes,
             recorded_by=user_id,
@@ -1088,20 +1009,9 @@ class LoanService:
         if status:
             query = query.filter(Loan.status == status.value)
         return query.order_by(Loan.created_at.desc()).all()
-    
-    @staticmethod
-    def get_overdue_loans(db: Session, tenant_id: int, branch_id: Optional[int] = None) -> List[Loan]:
-        query = db.query(Loan).filter(
-            Loan.tenant_id == tenant_id,
-            Loan.due_date < datetime.now(),
-            Loan.status.in_([LoanStatus.ACTIVE.value, LoanStatus.PARTIALLY_PAID.value])
-        )
-        if branch_id:
-            query = query.filter(Loan.branch_id == branch_id)
-        return query.all()
 
 
-# ==================== ALERT SERVICE (UPDATED) ====================
+# ==================== ALERT SERVICE ====================
 class AlertService:
     @staticmethod
     def create_alert(db: Session, branch_id: int, product_id: int, tenant_id: int, 
@@ -1167,38 +1077,6 @@ class AlertService:
                 )
     
     @staticmethod
-    def get_alerts(db: Session, tenant_id: int, resolved: bool = False, branch_id: Optional[int] = None) -> List:
-        query = db.query(Alert).filter(
-            Alert.tenant_id == tenant_id,
-            Alert.resolved == resolved
-        )
-        if branch_id:
-            query = query.filter(Alert.branch_id == branch_id)
-        
-        alerts = query.order_by(Alert.created_at.desc()).all()
-        
-        result = []
-        for alert in alerts:
-            product = db.query(Product).filter(Product.id == alert.product_id).first()
-            branch = db.query(Branch).filter(Branch.id == alert.branch_id).first()
-            resolver = db.query(User).filter(User.id == alert.resolved_by).first() if alert.resolved_by else None
-            result.append({
-                "id": alert.id,
-                "branch_id": alert.branch_id,
-                "branch_name": branch.name if branch else "Unknown Branch",
-                "product_id": alert.product_id,
-                "product_name": product.name if product else "Unknown Product",
-                "product_sku": product.sku if product else "N/A",
-                "alert_type": alert.alert_type,
-                "message": alert.message,
-                "created_at": alert.created_at,
-                "resolved": alert.resolved,
-                "resolved_at": alert.resolved_at,
-                "resolved_by": resolver.name if resolver else None
-            })
-        return result
-    
-    @staticmethod
     def resolve_alert(db: Session, alert_id: int, user_id: int, tenant_id: int):
         alert = db.query(Alert).filter(
             Alert.id == alert_id,
@@ -1214,96 +1092,7 @@ class AlertService:
         return alert
 
 
-# ==================== REPORT SERVICE (UPDATED) ====================
-class ReportService:
-    @staticmethod
-    def generate_sales_report(db: Session, tenant_id: int, report_type: str, branch_id: Optional[int] = None) -> Dict:
-        now = datetime.now()
-        if report_type == "weekly":
-            start_date = now - timedelta(days=7)
-        elif report_type == "monthly":
-            start_date = now - timedelta(days=30)
-        else:
-            raise ValueError("Report type must be 'weekly' or 'monthly'")
-        
-        query = db.query(Sale).filter(
-            Sale.tenant_id == tenant_id,
-            Sale.created_at >= start_date
-        )
-        if branch_id:
-            query = query.filter(Sale.branch_id == branch_id)
-        
-        sales = query.all()
-        total_revenue = sum(float(sale.total_amount) for sale in sales)
-        total_profit = sum(float(sale.total_amount - sale.total_cost) for sale in sales)
-        
-        product_sales = {}
-        for sale in sales:
-            for item in sale.items:
-                if item.product_id not in product_sales:
-                    product = db.query(Product).filter(Product.id == item.product_id).first()
-                    product_sales[item.product_id] = {
-                        "quantity": Decimal(0),
-                        "revenue": Decimal(0),
-                        "product_name": product.name if product else "Unknown",
-                        "product_sku": product.sku if product else "N/A"
-                    }
-                product_sales[item.product_id]["quantity"] += item.quantity
-                product_sales[item.product_id]["revenue"] += item.total
-        
-        best_sellers = sorted(product_sales.items(), key=lambda x: x[1]["quantity"], reverse=True)[:10]
-        slow_movers = sorted(product_sales.items(), key=lambda x: x[1]["quantity"])[:10]
-        
-        return {
-            "report_type": report_type,
-            "period": {"start": start_date, "end": now},
-            "summary": {
-                "total_sales": len(sales),
-                "total_revenue": total_revenue,
-                "total_profit": total_profit,
-                "average_sale_value": total_revenue / len(sales) if sales else 0
-            },
-            "best_selling_products": [
-                {"product_id": pid, "product_name": data["product_name"], "product_sku": data["product_sku"], 
-                 "quantity_sold": float(data["quantity"]), "revenue": float(data["revenue"])}
-                for pid, data in best_sellers
-            ],
-            "slow_moving_products": [
-                {"product_id": pid, "product_name": data["product_name"], "product_sku": data["product_sku"], 
-                 "quantity_sold": float(data["quantity"]), "revenue": float(data["revenue"])}
-                for pid, data in slow_movers
-            ]
-        }
-    
-    @staticmethod
-    def generate_loan_report(db: Session, tenant_id: int, branch_id: Optional[int] = None) -> Dict:
-        query = db.query(Loan).filter(Loan.tenant_id == tenant_id)
-        if branch_id:
-            query = query.filter(Loan.branch_id == branch_id)
-        
-        loans = query.all()
-        
-        total_issued = sum(float(loan.total_amount) for loan in loans)
-        total_repaid = sum(float(loan.paid_amount) for loan in loans)
-        total_outstanding = sum(float(loan.remaining_amount) for loan in loans)
-        
-        active_loans = [l for l in loans if l.status in [LoanStatus.ACTIVE.value, LoanStatus.PARTIALLY_PAID.value]]
-        overdue_loans = [l for l in active_loans if l.due_date < datetime.now()]
-        
-        return {
-            "summary": {
-                "total_loans": len(loans),
-                "total_issued": total_issued,
-                "total_repaid": total_repaid,
-                "total_outstanding": total_outstanding,
-                "active_loans": len(active_loans),
-                "overdue_loans": len(overdue_loans),
-                "repayment_rate": (total_repaid / total_issued * 100) if total_issued > 0 else 0
-            }
-        }
-
-
-# ==================== SETTINGS SERVICE (UPDATED) ====================
+# ==================== SETTINGS SERVICE ====================
 class SettingsService:
     
     @staticmethod
@@ -1336,66 +1125,6 @@ class SettingsService:
         return SettingsService._get_value(setting)
     
     @staticmethod
-    def get_category_settings(db: Session, category: str, tenant_id: Optional[int] = None) -> Dict[str, Any]:
-        query = db.query(SystemSetting).filter(SystemSetting.category == category)
-        if tenant_id:
-            query = query.filter(SystemSetting.tenant_id == tenant_id)
-        else:
-            query = query.filter(SystemSetting.tenant_id.is_(None))
-        
-        settings_list = query.all()
-        return {s.key: SettingsService._get_value(s) for s in settings_list}
-    
-    @staticmethod
-    def set_setting(db: Session, category: str, key: str, value: Any, 
-                    user_id: int = None, tenant_id: Optional[int] = None) -> Any:
-        query = db.query(SystemSetting).filter(
-            SystemSetting.category == category,
-            SystemSetting.key == key
-        )
-        if tenant_id:
-            query = query.filter(SystemSetting.tenant_id == tenant_id)
-        else:
-            query = query.filter(SystemSetting.tenant_id.is_(None))
-        
-        setting = query.first()
-        
-        old_value = SettingsService._get_value(setting) if setting else None
-        
-        if setting:
-            setting.value = SettingsService._set_value(value)
-        else:
-            setting = SystemSetting(
-                tenant_id=tenant_id,
-                category=category,
-                key=key,
-                value=SettingsService._set_value(value)
-            )
-            db.add(setting)
-        
-        db.commit()
-        db.refresh(setting)
-        
-        if user_id:
-            log = SystemLog(
-                tenant_id=tenant_id,
-                log_type="settings",
-                message=f"Setting changed: {category}.{key}",
-                details=f"Old: {old_value}, New: {value}",
-                user_id=user_id
-            )
-            db.add(log)
-            db.commit()
-        
-        return SettingsService._get_value(setting)
-    
-    @staticmethod
-    def set_multiple_settings(db: Session, category: str, settings_dict: Dict[str, Any], 
-                              user_id: int = None, tenant_id: Optional[int] = None):
-        for key, value in settings_dict.items():
-            SettingsService.set_setting(db, category, key, value, user_id, tenant_id)
-    
-    @staticmethod
     def get_all_settings(db: Session, tenant_id: Optional[int] = None) -> Dict[str, Any]:
         query = db.query(SystemSetting)
         if tenant_id:
@@ -1410,240 +1139,9 @@ class SettingsService:
                 result[setting.category] = {}
             result[setting.category][setting.key] = SettingsService._get_value(setting)
         return result
-    
-    @staticmethod
-    def initialize_default_settings(db: Session, tenant_id: Optional[int] = None):
-        defaults = {
-            "general": {
-                "system_name": "Inventory System",
-                "timezone": "Africa/Addis_Ababa",
-                "date_format": "YYYY-MM-DD",
-                "currency": "ETB",
-                "language": "en",
-                "items_per_page": 20,
-                "business_type": "shop"
-            },
-            "notification": {
-                "low_stock_email": True,
-                "daily_report_email": True,
-                "sms_alerts": False,
-                "loan_overdue_alerts": True,
-                "email_recipients": ["admin@example.com"],
-                "sms_recipients": []
-            },
-            "backup": {
-                "auto_backup": True,
-                "frequency": "daily",
-                "backup_time": "23:00",
-                "location": "local",
-                "retention_days": 30
-            }
-        }
-        
-        for category, category_settings in defaults.items():
-            for key, value in category_settings.items():
-                existing = db.query(SystemSetting).filter(
-                    SystemSetting.category == category,
-                    SystemSetting.key == key
-                )
-                if tenant_id:
-                    existing = existing.filter(SystemSetting.tenant_id == tenant_id)
-                else:
-                    existing = existing.filter(SystemSetting.tenant_id.is_(None))
-                
-                if not existing.first():
-                    db.add(SystemSetting(
-                        tenant_id=tenant_id,
-                        category=category,
-                        key=key,
-                        value=SettingsService._set_value(value)
-                    ))
-        db.commit()
-    
-    @staticmethod
-    def get_system_info(db: Session, tenant_id: Optional[int] = None) -> Dict:
-        user_query = db.query(User)
-        product_query = db.query(Product)
-        branch_query = db.query(Branch)
-        
-        if tenant_id:
-            user_query = user_query.filter(User.tenant_id == tenant_id)
-            product_query = product_query.filter(Product.tenant_id == tenant_id)
-            branch_query = branch_query.filter(Branch.tenant_id == tenant_id)
-        
-        total_users = user_query.count()
-        total_products = product_query.count()
-        total_branches = branch_query.count()
-        
-        last_week = datetime.now() - timedelta(days=7)
-        sale_query = db.query(Sale).filter(Sale.created_at >= last_week)
-        if tenant_id:
-            sale_query = sale_query.filter(Sale.tenant_id == tenant_id)
-        recent_sales = sale_query.count()
-        
-        last_backup = db.query(BackupRecord).order_by(BackupRecord.created_at.desc()).first()
-        
-        loan_query = db.query(Loan).filter(Loan.status.in_(['active', 'partially_paid']))
-        if tenant_id:
-            loan_query = loan_query.filter(Loan.tenant_id == tenant_id)
-        active_loans = loan_query.count()
-        
-        cache_size = SettingsService.get_setting(db, "system", "cache_size", tenant_id) or 24.5
-        
-        return {
-            "version": "4.0.0",
-            "build_date": "2025-04-10",
-            "database": "PostgreSQL/SQLite",
-            "server_status": "online",
-            "total_users": total_users,
-            "total_products": total_products,
-            "total_branches": total_branches,
-            "recent_sales": recent_sales,
-            "uptime_days": 45,
-            "active_loans": active_loans,
-            "last_backup": last_backup.created_at.isoformat() if last_backup else None,
-            "cache_size_mb": float(cache_size),
-            "last_cache_clear": SettingsService.get_setting(db, "system", "last_cache_clear", tenant_id)
-        }
-    
-    @staticmethod
-    def clear_cache() -> Dict:
-        return {"cleared": True, "size_freed_mb": 24.5}
-    
-    @staticmethod
-    def create_backup(db: Session, user_id: int = None, tenant_id: Optional[int] = None) -> Dict[str, Any]:
-        try:
-            backup_dir = "backups"
-            os.makedirs(backup_dir, exist_ok=True)
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            tenant_suffix = f"_tenant_{tenant_id}" if tenant_id else ""
-            backup_filename = f"backup_{timestamp}{tenant_suffix}.sql"
-            backup_path = os.path.join(backup_dir, backup_filename)
-            with open(backup_path, 'w') as f:
-                f.write(f"-- Backup created at {datetime.now()}\n")
-                f.write(f"-- Tenant ID: {tenant_id if tenant_id else 'System'}\n")
-                f.write("-- Database backup content\n")
-            file_size = os.path.getsize(backup_path) / (1024 * 1024)
-            backup = BackupRecord(
-                tenant_id=tenant_id,
-                name=backup_filename,
-                file_path=backup_path,
-                size_mb=file_size,
-                created_by=user_id
-            )
-            db.add(backup)
-            db.commit()
-            if user_id:
-                log = SystemLog(
-                    tenant_id=tenant_id,
-                    log_type="backup",
-                    message=f"Backup created: {backup_filename}",
-                    details=f"Size: {file_size:.2f} MB",
-                    user_id=user_id
-                )
-                db.add(log)
-                db.commit()
-            return {"id": backup.id, "name": backup.name, "size_mb": file_size, "created_at": backup.created_at.isoformat()}
-        except Exception as e:
-            raise Exception(f"Failed to create backup: {str(e)}")
-    
-    @staticmethod
-    def get_backups(db: Session, limit: int = 10, tenant_id: Optional[int] = None) -> List[Dict]:
-        query = db.query(BackupRecord)
-        if tenant_id:
-            query = query.filter(BackupRecord.tenant_id == tenant_id)
-        backups = query.order_by(BackupRecord.created_at.desc()).limit(limit).all()
-        return [{"id": b.id, "name": b.name, "size_mb": float(b.size_mb), "created_at": b.created_at.isoformat(), "created_by": b.creator.name if b.creator else "System"} for b in backups]
-    
-    @staticmethod
-    def delete_backup(db: Session, backup_id: int, user_id: int = None, tenant_id: Optional[int] = None) -> bool:
-        query = db.query(BackupRecord).filter(BackupRecord.id == backup_id)
-        if tenant_id:
-            query = query.filter(BackupRecord.tenant_id == tenant_id)
-        backup = query.first()
-        if backup:
-            if os.path.exists(backup.file_path):
-                os.remove(backup.file_path)
-            db.delete(backup)
-            db.commit()
-            if user_id:
-                log = SystemLog(
-                    tenant_id=tenant_id,
-                    log_type="backup",
-                    message=f"Backup deleted: {backup.name}",
-                    user_id=user_id
-                )
-                db.add(log)
-                db.commit()
-            return True
-        return False
-    
-    @staticmethod
-    def export_all_data(db: Session, tenant_id: int) -> Dict:
-        products = db.query(Product).filter(Product.tenant_id == tenant_id).all()
-        branches = db.query(Branch).filter(Branch.tenant_id == tenant_id).all()
-        users = db.query(User).filter(User.tenant_id == tenant_id).all()
-        categories = db.query(Category).filter(Category.tenant_id == tenant_id).all()
-        units = db.query(Unit).filter(Unit.tenant_id == tenant_id).all()
-        
-        return {
-            "export_date": datetime.now().isoformat(),
-            "export_version": "4.0.0",
-            "tenant_id": tenant_id,
-            "categories": [{"id": c.id, "name": c.name, "parent_id": c.parent_id} for c in categories],
-            "units": [{"id": u.id, "name": u.name, "symbol": u.symbol} for u in units],
-            "products": [{"id": p.id, "sku": p.sku, "name": p.name, "description": p.description, 
-                         "price": float(p.price), "cost": float(p.cost), "active": p.active,
-                         "category_id": p.category_id, "unit_id": p.unit_id, "barcode": p.barcode,
-                         "has_expiry": p.has_expiry, "track_batch": p.track_batch} for p in products],
-            "branches": [{"id": b.id, "name": b.name, "business_type": b.business_type, 
-                         "address": b.address, "phone": b.phone} for b in branches],
-            "users": [{"id": u.id, "name": u.name, "email": u.email, "role": u.role, 
-                      "branch_id": u.branch_id, "active": u.active} for u in users]
-        }
-    
-    @staticmethod
-    def reset_system_data(db: Session, tenant_id: int, user_id: int = None) -> Dict:
-        try:
-            # Delete in correct order (child tables first) for specific tenant
-            db.query(LoanPayment).filter(LoanPayment.loan.has(Loan.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(LoanItem).filter(LoanItem.loan.has(Loan.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(Loan).filter(Loan.tenant_id == tenant_id).delete()
-            db.query(SaleReturnItem).filter(SaleReturnItem.return_parent.has(SaleReturn.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(SaleReturn).filter(SaleReturn.tenant_id == tenant_id).delete()
-            db.query(SaleItem).filter(SaleItem.sale.has(Sale.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(Sale).filter(Sale.tenant_id == tenant_id).delete()
-            db.query(PurchaseOrderItem).filter(PurchaseOrderItem.purchase_order.has(PurchaseOrder.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(PurchaseOrder).filter(PurchaseOrder.tenant_id == tenant_id).delete()
-            db.query(PurchaseItem).filter(PurchaseItem.purchase.has(Purchase.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(Purchase).filter(Purchase.tenant_id == tenant_id).delete()
-            db.query(StockMovement).filter(StockMovement.branch.has(Branch.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(Batch).filter(Batch.tenant_id == tenant_id).delete()
-            db.query(Stock).filter(Stock.branch.has(Branch.tenant_id == tenant_id)).delete(synchronize_session=False)
-            db.query(Alert).filter(Alert.tenant_id == tenant_id).delete()
-            db.query(TempItem).filter(TempItem.tenant_id == tenant_id).delete()
-            db.commit()
-            
-            if user_id:
-                log = SystemLog(
-                    tenant_id=tenant_id,
-                    log_type="warning",
-                    message="System data reset",
-                    details="All transactional data has been cleared",
-                    user_id=user_id
-                )
-                db.add(log)
-                db.commit()
-            return {"message": "System data reset successfully"}
-        except Exception as e:
-            db.rollback()
-            raise Exception(f"Failed to reset data: {str(e)}")
-        
-        
-        
-        
-        
-        # ==================== SUBSCRIPTION SERVICE (NEW) ====================
+
+
+# ==================== SUBSCRIPTION SERVICE ====================
 class SubscriptionService:
     """Service for managing subscriptions and payments"""
     
@@ -1655,14 +1153,6 @@ class SubscriptionService:
             TenantSubscription.status == SubscriptionStatus.ACTIVE.value,
             TenantSubscription.payment_status == PaymentStatus.COMPLETED.value,
             TenantSubscription.end_date > datetime.now()
-        ).first()
-    
-    @staticmethod
-    def get_current_subscription(db: Session, tenant_id: int) -> Optional[TenantSubscription]:
-        """Get current subscription (active or pending)"""
-        return db.query(TenantSubscription).filter(
-            TenantSubscription.tenant_id == tenant_id,
-            TenantSubscription.is_current == True
         ).first()
     
     @staticmethod
@@ -1682,16 +1172,6 @@ class SubscriptionService:
         if active_sub:
             return True
         
-        # Grace period check
-        latest_sub = db.query(TenantSubscription).filter(
-            TenantSubscription.tenant_id == tenant_id
-        ).order_by(TenantSubscription.end_date.desc()).first()
-        
-        if latest_sub:
-            grace_end = latest_sub.end_date + timedelta(days=settings.GRACE_PERIOD_DAYS)
-            if datetime.now() < grace_end:
-                return True
-        
         return False
     
     @staticmethod
@@ -1708,8 +1188,6 @@ class SubscriptionService:
                 "status": "trial",
                 "is_valid": days_left > 0,
                 "days_left": max(0, days_left),
-                "trial_end": tenant.trial_end.isoformat() if tenant.trial_end else None,
-                "trial_start": tenant.trial_start.isoformat() if tenant.trial_start else None,
                 "message": f"Trial period: {max(0, days_left)} days remaining"
             }
         
@@ -1722,28 +1200,11 @@ class SubscriptionService:
                 "status": "active",
                 "is_valid": True,
                 "days_left": days_left,
-                "start_date": active_sub.start_date.isoformat() if active_sub.start_date else None,
-                "end_date": active_sub.end_date.isoformat() if active_sub.end_date else None,
                 "plan_name": plan.plan_name if plan else "Unknown",
-                "plan_type": plan.plan_type if plan else None,
-                "auto_renew": active_sub.auto_renew,
                 "message": f"Active subscription: {days_left} days remaining"
             }
         
-        # Pending payment
-        pending_sub = db.query(TenantSubscription).filter(
-            TenantSubscription.tenant_id == tenant_id,
-            TenantSubscription.payment_status == PaymentStatus.PENDING.value
-        ).first()
-        
-        if pending_sub:
-            return {
-                "status": "pending_payment",
-                "is_valid": False,
-                "message": "Payment pending. Please complete payment to activate."
-            }
-        
-        # Expired
+        # No subscription
         return {
             "status": "expired",
             "is_valid": False,
@@ -1768,282 +1229,13 @@ class SubscriptionService:
                 "max_users": plan.max_users,
                 "max_branches": plan.max_branches,
                 "max_products": plan.max_products,
-                "max_storage_mb": plan.max_storage_mb,
                 "features": {
                     "loans": plan.has_loans,
                     "batch_tracking": plan.has_batch_tracking,
-                    "pharmacy_features": plan.has_pharmacy_features,
-                    "advanced_reports": plan.has_advanced_reports,
                     "api_access": plan.has_api_access,
-                    "custom_branding": plan.has_custom_branding,
                     "multi_branch": plan.has_multi_branch,
-                    "priority_support": plan.has_priority_support,
                 },
-                "discount_percentage": float(plan.discount_percentage),
                 "is_popular": plan.is_popular,
-                "active": plan.active
             }
             for plan in plans
         ]
-    
-    @staticmethod
-    def create_subscription(
-        db: Session,
-        tenant_id: int,
-        plan_id: int,
-        payment_method: str,
-        auto_renew: bool = False
-    ) -> TenantSubscription:
-        """Create a new subscription for a tenant"""
-        
-        # Validate tenant
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-        if not tenant:
-            raise ValueError("Tenant not found")
-        
-        # Validate plan
-        plan = db.query(SubscriptionPlan).filter(
-            SubscriptionPlan.id == plan_id,
-            SubscriptionPlan.active == True
-        ).first()
-        if not plan:
-            raise ValueError("Plan not found or inactive")
-        
-        # Check for existing active subscription
-        existing_active = SubscriptionService.get_active_subscription(db, tenant_id)
-        if existing_active:
-            raise ValueError("Tenant already has an active subscription")
-        
-        # Check for pending subscription
-        pending_sub = db.query(TenantSubscription).filter(
-            TenantSubscription.tenant_id == tenant_id,
-            TenantSubscription.payment_status == PaymentStatus.PENDING.value
-        ).first()
-        if pending_sub:
-            raise ValueError("Tenant already has a pending subscription. Complete payment or cancel it first.")
-        
-        # Create payment record
-        payment_number = f"PAY-{datetime.now().strftime('%Y%m%d%H%M%S')}-{tenant_id}"
-        payment = Payment(
-            tenant_id=tenant_id,
-            payment_number=payment_number,
-            amount=plan.price,
-            payment_method=payment_method,
-            payment_status=PaymentStatus.PENDING.value,
-            payment_type="subscription",
-            notes=f"Subscription to {plan.plan_name}",
-            created_at=datetime.now()
-        )
-        db.add(payment)
-        db.flush()
-        
-        # Calculate subscription dates
-        start_date = datetime.now()
-        end_date = start_date + timedelta(days=plan.duration_months * 30)
-        
-        # Create subscription
-        subscription = TenantSubscription(
-            tenant_id=tenant_id,
-            plan_id=plan.id,
-            start_date=start_date,
-            end_date=end_date,
-            status=SubscriptionStatus.PENDING_PAYMENT.value,
-            auto_renew=auto_renew,
-            amount_paid=plan.price,
-            payment_status=PaymentStatus.PENDING.value,
-            payment_id=payment.id,
-            created_at=datetime.now()
-        )
-        db.add(subscription)
-        
-        # Update tenant status
-        tenant.status = TenantStatus.PENDING_PAYMENT.value
-        tenant.updated_at = datetime.now()
-        
-        db.flush()
-        return subscription
-    
-    @staticmethod
-    def verify_payment(
-        db: Session,
-        payment_id: int,
-        verified: bool,
-        verifier_id: int,
-        rejection_reason: Optional[str] = None
-    ) -> Dict:
-        """Verify or reject a payment"""
-        
-        payment = db.query(Payment).filter(Payment.id == payment_id).first()
-        if not payment:
-            raise ValueError("Payment not found")
-        
-        if payment.payment_status != PaymentStatus.PENDING.value:
-            raise ValueError(f"Payment is already {payment.payment_status}")
-        
-        if verified:
-            # Approve payment
-            payment.payment_status = PaymentStatus.COMPLETED.value
-            payment.verified_by = verifier_id
-            payment.verified_at = datetime.now()
-            payment.payment_date = datetime.now()
-            
-            # Activate subscription
-            subscription = db.query(TenantSubscription).filter(
-                TenantSubscription.payment_id == payment.id
-            ).first()
-            
-            if subscription:
-                subscription.payment_status = PaymentStatus.COMPLETED.value
-                subscription.status = SubscriptionStatus.ACTIVE.value
-                subscription.is_current = True
-                subscription.activated_at = datetime.now()
-                
-                # Deactivate other subscriptions for this tenant
-                db.query(TenantSubscription).filter(
-                    TenantSubscription.tenant_id == subscription.tenant_id,
-                    TenantSubscription.id != subscription.id,
-                    TenantSubscription.status == SubscriptionStatus.ACTIVE.value
-                ).update({
-                    "status": SubscriptionStatus.EXPIRED.value,
-                    "is_current": False
-                })
-                
-                # Activate tenant
-                tenant = db.query(Tenant).filter(Tenant.id == subscription.tenant_id).first()
-                if tenant:
-                    tenant.status = TenantStatus.ACTIVE.value
-                    tenant.updated_at = datetime.now()
-            
-            return {"status": "approved", "message": "Payment verified and subscription activated"}
-        else:
-            # Reject payment
-            payment.payment_status = PaymentStatus.FAILED.value
-            payment.rejection_reason = rejection_reason
-            payment.verified_by = verifier_id
-            payment.verified_at = datetime.now()
-            
-            # Cancel subscription
-            subscription = db.query(TenantSubscription).filter(
-                TenantSubscription.payment_id == payment.id
-            ).first()
-            if subscription:
-                subscription.status = SubscriptionStatus.CANCELLED.value
-                subscription.payment_status = PaymentStatus.FAILED.value
-            
-            return {"status": "rejected", "message": f"Payment rejected: {rejection_reason}"}
-    
-    @staticmethod
-    def cancel_subscription(db: Session, tenant_id: int) -> bool:
-        """Cancel current subscription"""
-        
-        active_sub = db.query(TenantSubscription).filter(
-            TenantSubscription.tenant_id == tenant_id,
-            TenantSubscription.status.in_([
-                SubscriptionStatus.ACTIVE.value,
-                SubscriptionStatus.PENDING_PAYMENT.value
-            ])
-        ).first()
-        
-        if not active_sub:
-            raise ValueError("No active or pending subscription found")
-        
-        active_sub.status = SubscriptionStatus.CANCELLED.value
-        active_sub.cancelled_at = datetime.now()
-        active_sub.is_current = False
-        
-        # Update tenant status if no other subscription
-        other_active = db.query(TenantSubscription).filter(
-            TenantSubscription.tenant_id == tenant_id,
-            TenantSubscription.id != active_sub.id,
-            TenantSubscription.status == SubscriptionStatus.ACTIVE.value
-        ).first()
-        
-        if not other_active:
-            tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-            if tenant:
-                tenant.status = TenantStatus.EXPIRED.value
-                tenant.updated_at = datetime.now()
-        
-        return True
-    
-    @staticmethod
-    def get_payment_history(db: Session, tenant_id: int) -> List[Dict]:
-        """Get payment history for a tenant"""
-        
-        payments = db.query(Payment).filter(
-            Payment.tenant_id == tenant_id
-        ).order_by(Payment.created_at.desc()).all()
-        
-        return [
-            {
-                "id": p.id,
-                "payment_number": p.payment_number,
-                "amount": float(p.amount),
-                "payment_method": p.payment_method,
-                "payment_status": p.payment_status,
-                "payment_type": p.payment_type,
-                "transaction_reference": p.transaction_reference,
-                "payment_date": p.payment_date.isoformat() if p.payment_date else None,
-                "receipt_url": p.receipt_url,
-                "notes": p.notes,
-                "created_at": p.created_at.isoformat() if p.created_at else None
-            }
-            for p in payments
-        ]
-    
-    @staticmethod
-    def get_subscription_features(db: Session, tenant_id: int) -> Dict:
-        """Get features available based on subscription"""
-        
-        # Default features (no subscription needed)
-        features = {
-            "max_users": 1,
-            "max_branches": 1,
-            "max_products": 100,
-            "has_loans": False,
-            "has_batch_tracking": False,
-            "has_pharmacy_features": False,
-            "has_advanced_reports": False,
-            "has_api_access": False,
-            "has_custom_branding": False,
-            "has_multi_branch": False,
-            "has_priority_support": False,
-        }
-        
-        # Check trial
-        tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-        if tenant and tenant.status == TenantStatus.TRIAL.value:
-            # Trial gets all features
-            return {
-                "max_users": 10,
-                "max_branches": 3,
-                "max_products": 5000,
-                "has_loans": True,
-                "has_batch_tracking": True,
-                "has_pharmacy_features": True,
-                "has_advanced_reports": True,
-                "has_api_access": True,
-                "has_custom_branding": False,
-                "has_multi_branch": True,
-                "has_priority_support": False,
-            }
-        
-        # Check active subscription
-        active_sub = SubscriptionService.get_active_subscription(db, tenant_id)
-        if active_sub and active_sub.plan:
-            plan = active_sub.plan
-            features = {
-                "max_users": plan.max_users,
-                "max_branches": plan.max_branches,
-                "max_products": plan.max_products,
-                "has_loans": plan.has_loans,
-                "has_batch_tracking": plan.has_batch_tracking,
-                "has_pharmacy_features": plan.has_pharmacy_features,
-                "has_advanced_reports": plan.has_advanced_reports,
-                "has_api_access": plan.has_api_access,
-                "has_custom_branding": plan.has_custom_branding,
-                "has_multi_branch": plan.has_multi_branch,
-                "has_priority_support": plan.has_priority_support,
-            }
-        
-        return features
