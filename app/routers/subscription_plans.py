@@ -46,7 +46,7 @@ async def get_plan(
 async def create_plan(
     plan: SubscriptionPlanCreate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_super_admin)
+    current_user = Depends(require_super_admin)  # FIXED
 ):
     """Create new subscription plan (Super Admin only)"""
     # Check for duplicate plan code
@@ -67,7 +67,7 @@ async def update_plan(
     plan_id: int,
     plan_update: SubscriptionPlanUpdate,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_super_admin)
+    current_user = Depends(require_super_admin)  # FIXED
 ):
     """Update subscription plan (Super Admin only)"""
     db_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()
@@ -86,7 +86,7 @@ async def update_plan(
 async def deactivate_plan(
     plan_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_super_admin)
+    current_user = Depends(require_super_admin)  # FIXED
 ):
     """Deactivate subscription plan (Super Admin only)"""
     db_plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == plan_id).first()
