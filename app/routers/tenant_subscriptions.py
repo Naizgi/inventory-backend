@@ -16,7 +16,7 @@ from app.schemas import (
     SubscriptionStatus,
     PaymentMethod
 )
-from app.utils.auth import get_current_user, get_current_super_admin
+from app.utils.auth import get_current_user, require_super_admin
 
 router = APIRouter(prefix="/api/subscriptions", tags=["Tenant Subscriptions"])
 
