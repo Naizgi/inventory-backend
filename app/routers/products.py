@@ -5,7 +5,7 @@ from typing import List, Optional
 from decimal import Decimal
 from app.database import get_db
 from app.services import ProductService, CategoryService, UnitService
-from app.schemas import Product, ProductCreate, ProductUpdate, ProductResponse
+from app.schemas import Product, ProductCreate, ProductUpdate
 from app.utils.auth import get_current_user, require_role, get_current_active_user, get_current_tenant, verify_branch_access
 from app.models import User, UserRole, Category, Unit, Stock, Product as ProductModel
 
