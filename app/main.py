@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import engine, Base, SessionLocal
 from app.config import settings
 from app.middleware.tenant import TenantMiddleware
-from app.utils.dependencies import get_current_user
+from app.utils.auth import get_current_user
 from app.utils.subscription_seed import seed_subscription_plans
 import logging
 
