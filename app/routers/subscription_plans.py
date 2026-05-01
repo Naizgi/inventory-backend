@@ -9,7 +9,7 @@ from app.schemas import (
     SubscriptionPlanResponse,
     SubscriptionPlanListResponse
 )
-from app.utils.auth import get_current_super_admin
+from app.utils.auth import require_super_admin
 
 router = APIRouter(prefix="/api/subscription-plans", tags=["Subscription Plans"])
 
