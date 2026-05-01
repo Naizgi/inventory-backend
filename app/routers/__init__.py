@@ -11,12 +11,12 @@ from app.routers.stock import router as stock_router
 from app.routers.sales import router as sales_router
 from app.routers.returns import router as returns_router
 from app.routers.purchase_routes import router as purchases_router
-from app.routers.loans import router as loans_router
+from app.routers.loan_routes import router as loans_router
 from app.routers.alerts import router as alerts_router
 from app.routers.reports import router as reports_router
 from app.routers.dashboard import router as dashboard_router
-from app.routers.settings import router as settings_router
-from app.routers.temp_items import router as temp_items_router
+from app.routers.settings_router import router as settings_router
+from app.routers.temp_items_routes import router as temp_items_router
 
 __all__ = [
     'auth_router',
