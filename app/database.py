@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 # Get database URL from settings
 DATABASE_URL = settings.DATABASE_URL
 
-logger.info(f"🔗 Database URL: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'sqlite'}")
+# Mask password in logs
+masked_url = DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else 'sqlite'
+logger.info(f"🔗 Database URL: {masked_url}")
 
 # Configure engine with retry logic for MySQL
 def get_engine():
@@ -382,7 +384,7 @@ class MultiTenantTransaction:
         return False
 
 
-# ==================== INITIALIZATION ====================
+# ==================== DATABASE INITIALIZATION ====================
 
 def init_db():
     """Initialize database - create all tables and seed data"""
@@ -407,6 +409,7 @@ def init_db():
         try:
             from app.utils.subscription_seed import seed_subscription_plans
             seed_subscription_plans(db)
+            logger.info("✅ Subscription plans seeded")
             
             # Create default super admin if not exists
             from app.services import AuthService
@@ -427,7 +430,11 @@ def init_db():
                 db.add(admin)
                 db.commit()
                 logger.info("✅ Default super admin created (admin@example.com / admin123)")
+            else:
+                logger.info("✅ Super admin already exists")
             
+        except Exception as e:
+            logger.error(f"❌ Error during seeding: {e}")
         finally:
             db.close()
         
@@ -437,3 +444,21 @@ def init_db():
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
         return False
+
+
+# ==================== AUTO-INITIALIZE ON MODULE LOAD ====================
+
+# Uncomment one of these lines to auto-initialize:
+
+# Option 1: Initialize immediately when module loads
+# init_db()
+
+# Option 2: Initialize on first use (lazy initialization)
+_initialized = False
+
+def ensure_db_initialized():
+    """Ensure database is initialized (lazy initialization)"""
+    global _initialized
+    if not _initialized:
+        init_db()
+        _initialized = True

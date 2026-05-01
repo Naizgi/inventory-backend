@@ -1,27 +1,78 @@
 # app/main.py - Updated with multi-tenant and subscription support
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import engine, Base, SessionLocal
+from fastapi.responses import JSONResponse
+from app.database import engine, Base, SessionLocal, init_db
 from app.config import settings
 from app.middleware.tenant import TenantMiddleware
 from app.utils.auth import get_current_user
 from app.utils.subscription_seed import seed_subscription_plans
 import logging
+import os
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+# Initialize database tables and seed data
+def initialize_database():
+    """Initialize database tables and seed initial data"""
+    try:
+        # Import all models to ensure they're registered with Base
+        from app.models import (
+            Tenant, User, Branch, Category, Unit, Product,
+            Stock, Batch, Sale, SaleItem, SaleReturn, SaleReturnItem,
+            PurchaseOrder, PurchaseOrderItem, Purchase, PurchaseItem,
+            Loan, LoanItem, LoanPayment, LoanSummary,
+            StockMovement, Alert, TempItem,
+            SystemSetting, BackupRecord, SystemLog,
+            SubscriptionPlan, TenantSubscription, Payment, Invoice, InvoiceItem
+        )
+        
+        # Create all tables
+        Base.metadata.create_all(bind=engine)
+        logger.info("✅ Database tables created/verified")
+        
+        # Seed subscription plans
+        db = SessionLocal()
+        try:
+            seed_subscription_plans(db)
+            logger.info("✅ Subscription plans seeded successfully")
+            
+            # Create default super admin if not exists
+            from app.services import AuthService
+            
+            admin = db.query(User).filter(
+                User.email == "admin@example.com",
+                User.role == "super_admin"
+            ).first()
+            
+            if not admin:
+                admin = User(
+                    name="Super Admin",
+                    email="admin@example.com",
+                    password_hash=AuthService.get_password_hash("admin123"),
+                    role="super_admin",
+                    active=True
+                )
+                db.add(admin)
+                db.commit()
+                logger.info("✅ Default super admin created (admin@example.com / admin123)")
+            else:
+                logger.info("✅ Super admin already exists")
+                
+        except Exception as e:
+            logger.error(f"❌ Error during seeding: {e}")
+        finally:
+            db.close()
+            
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {str(e)}")
+        return False
 
-# Seed subscription plans on startup
-try:
-    db = SessionLocal()
-    seed_subscription_plans(db)
-    db.close()
-    logger.info("Subscription plans seeded successfully")
-except Exception as e:
-    logger.error(f"Failed to seed subscription plans: {str(e)}")
+# Initialize database
+initialize_database()
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -89,6 +140,15 @@ async def startup_event():
     logger.info(f"Grace period: {settings.GRACE_PERIOD_DAYS} days")
     logger.info(f"Payment verification required: {settings.PAYMENT_VERIFICATION_REQUIRED}")
     
+    # Verify database connection
+    try:
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        logger.info("✅ Database connection verified")
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {e}")
+    
     # You could add scheduled tasks here for:
     # - Checking expired subscriptions
     # - Sending subscription expiry reminders
@@ -130,8 +190,19 @@ async def root(request: Request):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    # Check database
+    db_healthy = False
+    try:
+        db = SessionLocal()
+        db.execute("SELECT 1")
+        db.close()
+        db_healthy = True
+    except Exception as e:
+        logger.error(f"Health check DB error: {e}")
+    
     return {
-        "status": "healthy",
+        "status": "healthy" if db_healthy else "degraded",
+        "database": "connected" if db_healthy else "disconnected",
         "multi_tenant": settings.ENABLE_MULTI_TENANT,
         "subscription_system": True,
         "version": settings.APP_VERSION
@@ -192,3 +263,9 @@ async def subscription_check_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 """
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)
