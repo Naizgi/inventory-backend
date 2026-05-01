@@ -1379,3 +1379,132 @@ class SubscriptionService:
             }
             for plan in plans
         ]
+        
+        
+        
+        
+        
+        # ==================== REPORT SERVICE ====================
+class ReportService:
+    """Service for generating reports"""
+    
+    @staticmethod
+    def generate_sales_report(db: Session, tenant_id: int, report_type: str, branch_id: Optional[int] = None) -> Dict:
+        """Generate sales report (weekly, monthly, yearly, custom)"""
+        now = datetime.now()
+        
+        if report_type == "weekly":
+            start_date = now - timedelta(days=7)
+        elif report_type == "monthly":
+            start_date = now - timedelta(days=30)
+        elif report_type == "yearly":
+            start_date = now - timedelta(days=365)
+        else:
+            start_date = now - timedelta(days=30)
+        
+        query = db.query(Sale).filter(
+            Sale.tenant_id == tenant_id,
+            Sale.created_at >= start_date
+        )
+        
+        if branch_id:
+            query = query.filter(Sale.branch_id == branch_id)
+        
+        sales = query.all()
+        total_revenue = sum(float(sale.total_amount) for sale in sales)
+        total_profit = sum(float(sale.total_amount - sale.total_cost) for sale in sales)
+        
+        # Product sales breakdown
+        product_sales = {}
+        for sale in sales:
+            for item in sale.items:
+                if item.product_id not in product_sales:
+                    product = db.query(Product).filter(Product.id == item.product_id).first()
+                    product_sales[item.product_id] = {
+                        "quantity": Decimal(0),
+                        "revenue": Decimal(0),
+                        "product_name": product.name if product else "Unknown",
+                        "product_sku": product.sku if product else "N/A"
+                    }
+                product_sales[item.product_id]["quantity"] += item.quantity
+                product_sales[item.product_id]["revenue"] += item.total
+        
+        best_sellers = sorted(product_sales.items(), key=lambda x: x[1]["quantity"], reverse=True)[:10]
+        
+        return {
+            "report_type": report_type,
+            "period": {"start": start_date, "end": now},
+            "summary": {
+                "total_sales": len(sales),
+                "total_revenue": total_revenue,
+                "total_profit": total_profit,
+                "average_sale_value": total_revenue / len(sales) if sales else 0
+            },
+            "best_selling_products": [
+                {"product_id": pid, "product_name": data["product_name"], "product_sku": data["product_sku"],
+                 "quantity_sold": float(data["quantity"]), "revenue": float(data["revenue"])}
+                for pid, data in best_sellers
+            ]
+        }
+    
+    @staticmethod
+    def generate_loan_report(db: Session, tenant_id: int, branch_id: Optional[int] = None) -> Dict:
+        """Generate loan report"""
+        query = db.query(Loan).filter(Loan.tenant_id == tenant_id)
+        
+        if branch_id:
+            query = query.filter(Loan.branch_id == branch_id)
+        
+        loans = query.all()
+        
+        total_issued = sum(float(loan.total_amount) for loan in loans)
+        total_repaid = sum(float(loan.paid_amount) for loan in loans)
+        total_outstanding = sum(float(loan.remaining_amount) for loan in loans)
+        
+        active_loans = [l for l in loans if l.status in [LoanStatus.ACTIVE.value, LoanStatus.PARTIALLY_PAID.value]]
+        overdue_loans = [l for l in active_loans if l.due_date < datetime.now()]
+        
+        return {
+            "summary": {
+                "total_loans": len(loans),
+                "total_issued": total_issued,
+                "total_repaid": total_repaid,
+                "total_outstanding": total_outstanding,
+                "active_loans": len(active_loans),
+                "overdue_loans": len(overdue_loans),
+                "repayment_rate": (total_repaid / total_issued * 100) if total_issued > 0 else 0
+            }
+        }
+    
+    @staticmethod
+    def generate_inventory_report(db: Session, tenant_id: int, branch_id: Optional[int] = None) -> Dict:
+        """Generate inventory valuation report"""
+        stock_query = db.query(Stock).join(Product).filter(Product.tenant_id == tenant_id)
+        
+        if branch_id:
+            stock_query = stock_query.filter(Stock.branch_id == branch_id)
+        
+        stocks = stock_query.all()
+        
+        total_value = Decimal(0)
+        items = []
+        
+        for stock in stocks:
+            item_value = stock.quantity * stock.product.cost
+            total_value += item_value
+            
+            items.append({
+                "product_id": stock.product_id,
+                "product_name": stock.product.name,
+                "product_sku": stock.product.sku,
+                "quantity": float(stock.quantity),
+                "unit_cost": float(stock.product.cost),
+                "total_value": float(item_value),
+                "status": "low" if stock.quantity <= stock.reorder_level else "normal"
+            })
+        
+        return {
+            "total_inventory_value": float(total_value),
+            "total_items": len(items),
+            "items": items[:100]
+        }
