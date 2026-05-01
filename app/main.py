@@ -9,6 +9,8 @@ from app.utils.auth import get_current_user
 from app.utils.subscription_seed import seed_subscription_plans
 import logging
 import os
+from sqlalchemy import text
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -143,7 +145,7 @@ async def startup_event():
     # Verify database connection
     try:
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         logger.info("✅ Database connection verified")
     except Exception as e:
