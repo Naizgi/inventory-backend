@@ -6,9 +6,9 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 from app.database import get_db
 from app.services import BatchService, StockService, ProductService
-from app.schemas import BatchCreate, BatchUpdate, Batch
+from app.schemas import BatchCreate, BatchUpdate, Batch  # Batch from schemas (Pydantic)
 from app.utils.auth import get_current_user, require_role, get_current_tenant, verify_branch_access
-from app.models import User, Batch, Product, StockMovement, MovementType, Branch, UserRole
+from app.models import User, Batch as BatchModel, Product, StockMovement, MovementType, Branch, UserRole
 
 router = APIRouter(prefix="/batches", tags=["Batches"])
 
