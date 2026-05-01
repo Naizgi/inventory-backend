@@ -8,7 +8,7 @@ import traceback
 
 from app.database import get_db
 from app.models import User, Sale, SaleItem, Product, Stock, StockMovement, Branch, Batch, UserRole
-from app.schemas import Sale as SaleSchema, SaleCreate, SaleItem as SaleItemSchema, SaleResponse
+from app.schemas import Sale as SaleSchema, SaleCreate, SaleItem as SaleItemSchema
 from app.services import SaleService, ProductService, StockService, BatchService
 from app.utils.auth import get_current_user, require_role, verify_branch_access, get_current_tenant
 

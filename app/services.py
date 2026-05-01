@@ -1090,6 +1090,146 @@ class AlertService:
         db.commit()
         db.refresh(alert)
         return alert
+    
+    
+    # Add these methods to AlertService class in services.py
+
+@staticmethod
+def get_alerts(db: Session, tenant_id: int, resolved: bool = False, branch_id: Optional[int] = None) -> List[Dict]:
+    """Get alerts with optional filters"""
+    query = db.query(Alert).filter(
+        Alert.tenant_id == tenant_id,
+        Alert.resolved == resolved
+    )
+    if branch_id:
+        query = query.filter(Alert.branch_id == branch_id)
+    
+    alerts = query.order_by(Alert.created_at.desc()).all()
+    
+    result = []
+    for alert in alerts:
+        product = db.query(Product).filter(Product.id == alert.product_id).first()
+        branch = db.query(Branch).filter(Branch.id == alert.branch_id).first()
+        resolver = db.query(User).filter(User.id == alert.resolved_by).first() if alert.resolved_by else None
+        
+        result.append({
+            "id": alert.id,
+            "tenant_id": alert.tenant_id,
+            "branch_id": alert.branch_id,
+            "branch_name": branch.name if branch else "Unknown",
+            "product_id": alert.product_id,
+            "product_name": product.name if product else "Unknown",
+            "product_sku": product.sku if product else "N/A",
+            "alert_type": alert.alert_type,
+            "message": alert.message,
+            "created_at": alert.created_at,
+            "resolved": alert.resolved,
+            "resolved_at": alert.resolved_at,
+            "resolved_by": resolver.name if resolver else None
+        })
+    
+    return result
+
+@staticmethod
+def auto_resolve_alerts(db: Session, tenant_id: int) -> int:
+    """Auto-resolve alerts for items that are no longer low stock"""
+    resolved_count = 0
+    alerts = db.query(Alert).filter(
+        Alert.tenant_id == tenant_id,
+        Alert.resolved == False,
+        Alert.alert_type.in_(["low_stock", "out_of_stock"])
+    ).all()
+    
+    for alert in alerts:
+        stock = db.query(Stock).filter(
+            Stock.branch_id == alert.branch_id,
+            Stock.product_id == alert.product_id
+        ).first()
+        
+        if stock and stock.quantity > stock.reorder_level:
+            alert.resolved = True
+            alert.resolved_at = datetime.now()
+            resolved_count += 1
+    
+    db.commit()
+    return resolved_count
+
+@staticmethod
+def auto_resolve_alerts_for_branch(db: Session, branch_id: int, tenant_id: int) -> int:
+    """Auto-resolve alerts for a specific branch"""
+    resolved_count = 0
+    alerts = db.query(Alert).filter(
+        Alert.tenant_id == tenant_id,
+        Alert.branch_id == branch_id,
+        Alert.resolved == False,
+        Alert.alert_type.in_(["low_stock", "out_of_stock"])
+    ).all()
+    
+    for alert in alerts:
+        stock = db.query(Stock).filter(
+            Stock.branch_id == branch_id,
+            Stock.product_id == alert.product_id
+        ).first()
+        
+        if stock and stock.quantity > stock.reorder_level:
+            alert.resolved = True
+            alert.resolved_at = datetime.now()
+            resolved_count += 1
+    
+    db.commit()
+    return resolved_count
+
+@staticmethod
+def get_low_stock_summary(db: Session, tenant_id: int, branch_id: Optional[int] = None) -> Dict:
+    """Get low stock summary"""
+    query = db.query(Stock).join(Product).filter(
+        Product.tenant_id == tenant_id,
+        Stock.quantity <= Stock.reorder_level,
+        Stock.quantity > 0
+    )
+    
+    if branch_id:
+        query = query.filter(Stock.branch_id == branch_id)
+    
+    stocks = query.all()
+    
+    items = []
+    for stock in stocks:
+        product = stock.product
+        branch = db.query(Branch).filter(Branch.id == stock.branch_id).first()
+        items.append({
+            "product_id": product.id,
+            "product_name": product.name,
+            "product_sku": product.sku,
+            "branch_id": stock.branch_id,
+            "branch_name": branch.name if branch else "Unknown",
+            "current_quantity": float(stock.quantity),
+            "reorder_level": float(stock.reorder_level),
+            "shortage": float(stock.reorder_level - stock.quantity)
+        })
+    
+    return {
+        "total_low_stock_items": len(items),
+        "items": items
+    }
+
+@staticmethod
+def check_low_stock_and_create_alerts(db: Session, tenant_id: int) -> int:
+    """Check all branches and create low stock alerts"""
+    alerts_created = 0
+    branches = db.query(Branch).filter(Branch.tenant_id == tenant_id).all()
+    
+    for branch in branches:
+        stocks = db.query(Stock).join(Product).filter(
+            Product.tenant_id == tenant_id,
+            Stock.branch_id == branch.id
+        ).all()
+        
+        for stock in stocks:
+            if AlertService.check_and_create_alert(db, branch.id, stock.product_id, tenant_id):
+                alerts_created += 1
+    
+    return alerts_created
 
 
 # ==================== SETTINGS SERVICE ====================
