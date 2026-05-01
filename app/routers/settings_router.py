@@ -11,6 +11,7 @@ from app.schemas import (
 )
 from app.utils.auth import get_current_user, require_role, get_current_tenant
 from app.models import User, SystemLog, SystemSetting, UserRole
+from pydantic import BaseModel  # Add this line
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 

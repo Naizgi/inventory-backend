@@ -7,6 +7,7 @@ from app.services import AlertService
 from app.schemas import AlertResponse, AlertCreate 
 from app.utils.auth import get_current_user, require_role, verify_branch_access, get_current_tenant
 from app.models import User, Alert, Branch, Product, Stock, Batch, UserRole
+from pydantic import BaseModel  # Add this line
 
 router = APIRouter(prefix="/alerts", tags=["Alerts"])
 
