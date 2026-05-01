@@ -155,7 +155,7 @@ async def verify_payment(
     verified: bool = Query(...),
     rejection_reason: str = Query(None),
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_super_admin)
+    current_user = Depends(require_super_admin)
 ):
     """Verify a payment (Super Admin only)"""
     payment = db.query(Payment).filter(Payment.id == payment_id).first()
@@ -231,7 +231,7 @@ async def get_my_subscription(
 async def get_tenant_subscriptions(
     tenant_id: int,
     db: Session = Depends(get_db),
-    current_user = Depends(get_current_super_admin)
+    current_user = Depends(require_super_admin)
 ):
     """Get all subscriptions for a tenant (Super Admin only)"""
     subscriptions = db.query(TenantSubscription).filter(
