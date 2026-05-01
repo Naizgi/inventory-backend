@@ -4,7 +4,7 @@ from typing import List, Optional
 from datetime import datetime, timedelta
 from app.database import get_db
 from app.services import AlertService
-from app.schemas import Sale as SaleSchema, SaleCreate, SaleItem as SaleItemSchema
+from app.schemas import AlertResponse, AlertCreate 
 from app.utils.auth import get_current_user, require_role, verify_branch_access, get_current_tenant
 from app.models import User, Alert, Branch, Product, Stock, Batch, UserRole
 
