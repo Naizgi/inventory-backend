@@ -187,9 +187,6 @@ async def register_user(
 ):
     """
     Register a new user (public registration).
-    
-    For tenant users, requires valid tenant context.
-    Super admin registration is restricted.
     """
     try:
         # Prevent super admin registration through public API
@@ -199,8 +196,6 @@ async def register_user(
                 detail="Super admin registration not allowed through this endpoint"
             )
         
-        tenant_id = getattr(request.state, 'tenant_id', None)
-        
         # Check if email already exists
         existing = db.query(User).filter(User.email == user_data.email).first()
         if existing:
@@ -208,6 +203,29 @@ async def register_user(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
+        
+        tenant_id = getattr(request.state, 'tenant_id', None)
+        
+        # If no tenant context, create a new tenant for this admin
+        if not tenant_id:
+            logger.info(f"No tenant context - creating new tenant for: {user_data.email}")
+            
+            # Create a new tenant
+            tenant_name = f"{user_data.name}'s Business"
+            subdomain = f"{user_data.email.split('@')[0].lower()}_{int(datetime.now().timestamp())}"
+            
+            new_tenant = Tenant(
+                name=tenant_name,
+                subdomain=subdomain,
+                business_type="shop",
+                status="active",
+                created_at=datetime.now()
+            )
+            db.add(new_tenant)
+            db.commit()
+            db.refresh(new_tenant)
+            tenant_id = new_tenant.id
+            logger.info(f"✅ Created new tenant {tenant_id}: {tenant_name}")
         
         # Validate tenant exists
         tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
@@ -224,26 +242,6 @@ async def register_user(
                 detail="Tenant is suspended. Cannot register new users."
             )
         
-        # Check user limit based on subscription
-        if tenant.status != TenantStatus.TRIAL:
-            user_count = db.query(User).filter(
-                User.tenant_id == tenant_id,
-                User.active == True
-            ).count()
-            
-            active_sub = db.query(TenantSubscription).join(SubscriptionPlan).filter(
-                TenantSubscription.tenant_id == tenant_id,
-                TenantSubscription.status == SubscriptionStatus.ACTIVE,
-                TenantSubscription.payment_status == PaymentStatus.COMPLETED
-            ).first()
-            
-            if active_sub and active_sub.plan:
-                if user_count >= active_sub.plan.max_users:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Maximum users ({active_sub.plan.max_users}) reached for your plan. Please upgrade."
-                    )
-        
         # Create user
         user = User(
             tenant_id=tenant_id,
@@ -252,7 +250,8 @@ async def register_user(
             password_hash=AuthService.get_password_hash(user_data.password),
             role=user_data.role,
             branch_id=user_data.branch_id,
-            active=True
+            active=True,
+            created_at=datetime.now()
         )
         db.add(user)
         db.commit()
@@ -263,13 +262,14 @@ async def register_user(
             tenant_id=tenant_id,
             log_type="info",
             message=f"New user registered: {user.email}",
-            details=f"Role: {user.role}, Branch: {user.branch_id}",
+            details=f"Role: {user.role}",
             user_id=user.id,
             ip_address=request.client.host if request.client else None
         )
         db.add(log)
         db.commit()
         
+        logger.info(f"✅ User registered: {user.email}, Tenant: {tenant_id}")
         return UserResponse.model_validate(user)
         
     except HTTPException:
@@ -279,9 +279,8 @@ async def register_user(
         logger.error(f"Registration error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred during registration"
+            detail=f"An error occurred during registration: {str(e)}"
         )
-
 
 @router.post("/logout")
 async def logout(
