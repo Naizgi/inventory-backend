@@ -21,6 +21,11 @@ from app.utils.auth import (
 )
 from app.config import settings
 import logging
+import random
+import string
+from app.models import OTP
+from app.services.email_service import EmailService
+
 
 logger = logging.getLogger(__name__)
 
@@ -419,6 +424,232 @@ async def change_password(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to change password"
+        )
+
+
+
+# ==================== OTP ENDPOINTS ====================
+
+def generate_otp() -> str:
+    """Generate a 6-digit OTP"""
+    return ''.join(random.choices(string.digits, k=6))
+
+@router.post("/send-otp")
+async def send_otp(
+    email: str,
+    purpose: str = "verification",
+    db: Session = Depends(get_db)
+):
+    """
+    Send OTP to email for verification
+    """
+    try:
+        # Check rate limiting - prevent spam
+        last_otp = db.query(OTP).filter(
+            OTP.email == email,
+            OTP.purpose == purpose,
+            OTP.created_at > datetime.now() - timedelta(minutes=1)
+        ).first()
+        
+        if last_otp:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Please wait 60 seconds before requesting another OTP"
+            )
+        
+        # For registration, check if email already exists
+        if purpose == "registration":
+            existing_user = db.query(User).filter(User.email == email).first()
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email already registered"
+                )
+        
+        # Generate OTP
+        otp_code = generate_otp()
+        expires_at = datetime.now() + timedelta(minutes=10)
+        
+        # Delete old unused OTPs for this email/purpose
+        db.query(OTP).filter(
+            OTP.email == email,
+            OTP.purpose == purpose,
+            OTP.is_used == False
+        ).delete()
+        
+        # Save OTP to database
+        otp_record = OTP(
+            email=email,
+            otp_code=otp_code,
+            purpose=purpose,
+            expires_at=expires_at,
+            is_used=False
+        )
+        db.add(otp_record)
+        db.commit()
+        
+        # Send email
+        email_sent = EmailService.send_otp_email(email, otp_code, purpose)
+        
+        if not email_sent:
+            logger.warning(f"Failed to send OTP email to {email}, but OTP saved: {otp_code}")
+        
+        return {
+            "success": True,
+            "message": "OTP sent successfully",
+            "expires_in": 600  # 10 minutes in seconds
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Send OTP error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to send OTP"
+        )
+
+
+@router.post("/verify-otp")
+async def verify_otp(
+    email: str,
+    otp: str,
+    purpose: str = "verification",
+    db: Session = Depends(get_db)
+):
+    """
+    Verify OTP code
+    """
+    try:
+        # Find valid OTP
+        otp_record = db.query(OTP).filter(
+            OTP.email == email,
+            OTP.otp_code == otp,
+            OTP.purpose == purpose,
+            OTP.is_used == False,
+            OTP.expires_at > datetime.now()
+        ).first()
+        
+        if not otp_record:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired OTP"
+            )
+        
+        # Mark OTP as used
+        otp_record.is_used = True
+        db.commit()
+        
+        # Generate a temporary token for registration completion
+        temp_token = AuthService.create_access_token(
+            data={"email": email, "purpose": purpose, "verified": True},
+            expires_delta=timedelta(minutes=30)
+        )
+        
+        return {
+            "success": True,
+            "message": "OTP verified successfully",
+            "temp_token": temp_token
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Verify OTP error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to verify OTP"
+        )
+
+
+@router.post("/resend-otp")
+async def resend_otp(
+    email: str,
+    purpose: str = "verification",
+    db: Session = Depends(get_db)
+):
+    """
+    Resend OTP code
+    """
+    return await send_otp(email, purpose, db)
+
+
+@router.post("/complete-registration", response_model=UserResponse)
+async def complete_registration(
+    user_data: UserCreate,
+    otp_token: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Complete registration after OTP verification
+    """
+    try:
+        # Verify OTP token
+        try:
+            payload = jwt.decode(
+                otp_token,
+                settings.SECRET_KEY,
+                algorithms=[settings.ALGORITHM]
+            )
+            verified_email = payload.get("email")
+            purpose = payload.get("purpose")
+            
+            if purpose != "registration" or not payload.get("verified"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid verification token"
+                )
+            
+            if verified_email != user_data.email:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email mismatch"
+                )
+        except jwt.InvalidTokenError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired verification token"
+            )
+        
+        # Check if email already exists
+        existing = db.query(User).filter(User.email == user_data.email).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Prevent super admin registration
+        if user_data.role == "super_admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Super admin registration not allowed"
+            )
+        
+        # Create user
+        user = User(
+            name=user_data.name,
+            email=user_data.email,
+            password_hash=AuthService.get_password_hash(user_data.password),
+            role=user_data.role,
+            active=True,
+            created_at=datetime.now()
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        logger.info(f"✅ User registered successfully: {user.email}")
+        return UserResponse.model_validate(user)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Complete registration error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to complete registration"
         )
 
 

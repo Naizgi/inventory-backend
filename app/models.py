@@ -904,6 +904,28 @@ class SystemLog(Base):
     # Relationships
     tenant = relationship("Tenant", back_populates="system_logs")
     user = relationship("User", foreign_keys=[user_id], back_populates="system_logs")
+    
+    
+    
+    
+    # Add to app/models.py
+        
+        # ==================== OTP MODEL ====================
+class OTP(Base):
+    """OTP verification codes for email verification"""
+    __tablename__ = "otps"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    otp_code = Column(String(6), nullable=False)
+    purpose = Column(String(50), nullable=False)  # registration, password_reset, login
+    is_used = Column(Boolean, default=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    def is_valid(self) -> bool:
+        """Check if OTP is still valid"""
+        return not self.is_used and self.expires_at > datetime.now()
 
 
 # ==================== SEED DATA FUNCTION ====================
