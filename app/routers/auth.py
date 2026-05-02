@@ -24,7 +24,7 @@ import logging
 import random
 import string
 from app.models import OTP
-from app.services.email_service import EmailService
+from app.services import EmailService
 
 
 logger = logging.getLogger(__name__)
