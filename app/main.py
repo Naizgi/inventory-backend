@@ -2,7 +2,7 @@
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from app.database import engine, Base, SessionLocal, init_db
+from app.database import engine, Base, SessionLocal
 from app.config import settings
 from app.middleware.tenant import TenantMiddleware
 from app.utils.auth import get_current_user
@@ -27,7 +27,8 @@ def initialize_database():
             Loan, LoanItem, LoanPayment, LoanSummary,
             StockMovement, Alert, TempItem,
             SystemSetting, BackupRecord, SystemLog,
-            SubscriptionPlan, TenantSubscription, Payment, Invoice, InvoiceItem
+            SubscriptionPlan, TenantSubscription, Payment, Invoice, InvoiceItem,
+            OTP  # Make sure OTP is imported
         )
         
         # Create all tables
@@ -85,33 +86,62 @@ app = FastAPI(
 # Add tenant middleware FIRST (before CORS)
 app.add_middleware(TenantMiddleware)
 
-# CORS
+# CORS - Allow all origins for testing
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],  # Temporarily allow all for testing
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Import routers
-from app.routers import (
-    auth_router, users_router, branches_router, tenants_router,
-    categories_router, units_router, products_router, batches_router,
-    stock_router, sales_router, returns_router, purchases_router,
-    loans_router, alerts_router, reports_router, dashboard_router,
-    settings_router, temp_items_router
-)
 
-# Import subscription routers
+# ==================== DEBUG ENDPOINTS ====================
+@app.get("/debug-ping")
+async def debug_ping():
+    return {"message": "pong", "status": "ok"}
+
+@app.get("/debug-routes")
+async def debug_routes():
+    routes = []
+    for route in app.routes:
+        routes.append({
+            "path": route.path,
+            "methods": list(route.methods) if hasattr(route, 'methods') else ["GET"]
+        })
+    return {"routes": routes, "total": len(routes)}
+
+
+# ==================== DIRECT ROUTER IMPORTS ====================
+# Import routers directly (not from __init__.py)
+from app.routers.auth import router as auth_router
+from app.routers.users import router as users_router
+from app.routers.branches import router as branches_router
+from app.routers.tenants import router as tenants_router
+from app.routers.categories import router as categories_router
+from app.routers.units import router as units_router
+from app.routers.products import router as products_router
+from app.routers.batches import router as batches_router
+from app.routers.stock import router as stock_router
+from app.routers.sales import router as sales_router
+from app.routers.returns import router as returns_router
+from app.routers.purchases import router as purchases_router
+from app.routers.loans import router as loans_router
+from app.routers.alerts import router as alerts_router
+from app.routers.reports import router as reports_router
+from app.routers.dashboard import router as dashboard_router
+from app.routers.settings import router as settings_router
+from app.routers.temp_items import router as temp_items_router
 from app.routers.subscription_plans import router as subscription_plans_router
 from app.routers.tenant_subscriptions import router as tenant_subscriptions_router
 
+logger.info("✅ All routers imported successfully")
+
 # Register routers
-app.include_router(tenants_router, prefix="/api/tenants", tags=["Tenants"])
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users_router, prefix="/api/users", tags=["Users"])
 app.include_router(branches_router, prefix="/api/branches", tags=["Branches"])
+app.include_router(tenants_router, prefix="/api/tenants", tags=["Tenants"])
 app.include_router(categories_router, prefix="/api/categories", tags=["Categories"])
 app.include_router(units_router, prefix="/api/units", tags=["Units"])
 app.include_router(products_router, prefix="/api/products", tags=["Products"])
@@ -126,10 +156,10 @@ app.include_router(reports_router, prefix="/api/reports", tags=["Reports"])
 app.include_router(dashboard_router, prefix="/api/dashboard", tags=["Dashboard"])
 app.include_router(settings_router, prefix="/api/settings", tags=["Settings"])
 app.include_router(temp_items_router, prefix="/api/temp-items", tags=["Temporary Items"])
-
-# Register subscription routers
 app.include_router(subscription_plans_router, prefix="/api/subscription-plans", tags=["Subscription Plans"])
 app.include_router(tenant_subscriptions_router, prefix="/api/subscriptions", tags=["Tenant Subscriptions"])
+
+logger.info("✅ All routers registered")
 
 
 @app.on_event("startup")
@@ -150,11 +180,6 @@ async def startup_event():
         logger.info("✅ Database connection verified")
     except Exception as e:
         logger.error(f"❌ Database connection failed: {e}")
-    
-    # You could add scheduled tasks here for:
-    # - Checking expired subscriptions
-    # - Sending subscription expiry reminders
-    # - Auto-suspending expired tenants
 
 
 @app.on_event("shutdown")
@@ -167,7 +192,6 @@ async def shutdown_event():
 async def root(request: Request):
     tenant_id = getattr(request.state, 'tenant_id', None)
     
-    # Get subscription info if tenant
     subscription_info = None
     if tenant_id:
         try:
@@ -192,11 +216,10 @@ async def root(request: Request):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    # Check database
     db_healthy = False
     try:
         db = SessionLocal()
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
         db.close()
         db_healthy = True
     except Exception as e:
@@ -227,44 +250,6 @@ async def get_public_plans():
     except Exception as e:
         logger.error(f"Failed to get plans: {str(e)}")
         return {"error": "Failed to load plans", "plans": []}
-
-
-# Optional: Add middleware to check subscription on each request
-# Uncomment if you want to enforce subscription checks on all routes
-"""
-@app.middleware("http")
-async def subscription_check_middleware(request: Request, call_next):
-    # Check subscription for API routes
-    if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/auth/"):
-        tenant_id = getattr(request.state, 'tenant_id', None)
-        
-        if tenant_id:
-            try:
-                db = SessionLocal()
-                from app.services import SubscriptionService
-                
-                # Skip check for subscription-related endpoints
-                skip_paths = [
-                    "/api/subscription-plans/",
-                    "/api/plans/public",
-                    "/api/health"
-                ]
-                
-                if not any(request.url.path.startswith(path) for path in skip_paths):
-                    if not SubscriptionService.check_subscription_valid(db, tenant_id):
-                        db.close()
-                        return JSONResponse(
-                            status_code=402,
-                            content={"detail": "Subscription required. Please subscribe to continue."}
-                        )
-                
-                db.close()
-            except Exception as e:
-                logger.error(f"Subscription middleware error: {str(e)}")
-    
-    response = await call_next(request)
-    return response
-"""
 
 
 if __name__ == "__main__":
