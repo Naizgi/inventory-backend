@@ -29,7 +29,7 @@ from app.services import EmailService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(tags=["Authentication"])
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
