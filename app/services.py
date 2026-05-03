@@ -1514,6 +1514,10 @@ class ReportService:
 class EmailService:
     """Service for sending emails using Bravo Email Service"""
     
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    
     # Bravo API Configuration
     BRAVO_API_URL = os.getenv("BRAVO_API_URL", "https://api.bravo.com/v1/email/send")
     BRAVO_API_KEY = os.getenv("BRAVO_API_KEY", "")
