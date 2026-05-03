@@ -4,8 +4,13 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
+import logging
+import random
+import string
+import jwt
+
 from app.database import get_db
-from app.models import User, Tenant, SystemLog, TenantSubscription, SubscriptionPlan, Payment
+from app.models import User, Tenant, SystemLog, TenantSubscription, SubscriptionPlan, Payment, OTP
 from app.schemas import (
     Token, TokenData, LoginRequest, UserResponse, UserCreate,
     ChangePasswordRequest, ForgotPasswordRequest, ResetPasswordRequest,
@@ -13,23 +18,24 @@ from app.schemas import (
     SubscriptionCheckResponse, PaymentCreate, PaymentResponse,
     TenantSubscriptionCreate, TenantSubscriptionResponse
 )
-from app.services import AuthService
+from app.services import AuthService, EmailService
 from app.utils.auth import (
     get_current_user, get_current_active_user, get_current_user_with_subscription,
     require_super_admin, require_tenant_admin, get_subscription_status,
     check_subscription_valid
 )
 from app.config import settings
-import logging
-import random
-import string
-from app.models import OTP
-from app.services import EmailService
-
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Authentication"])
+
+
+# ==================== HELPER FUNCTIONS ====================
+
+def generate_otp() -> str:
+    """Generate a 6-digit OTP"""
+    return ''.join(random.choices(string.digits, k=6))
 
 
 # ==================== AUTHENTICATION ENDPOINTS ====================
@@ -223,7 +229,7 @@ async def register_user(
                 name=tenant_name,
                 subdomain=subdomain,
                 business_type="shop",
-                status="active",
+                status=TenantStatus.ACTIVE.value,
                 created_at=datetime.now()
             )
             db.add(new_tenant)
@@ -286,6 +292,7 @@ async def register_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred during registration: {str(e)}"
         )
+
 
 @router.post("/logout")
 async def logout(
@@ -427,12 +434,7 @@ async def change_password(
         )
 
 
-
 # ==================== OTP ENDPOINTS ====================
-
-def generate_otp() -> str:
-    """Generate a 6-digit OTP"""
-    return ''.join(random.choices(string.digits, k=6))
 
 @router.post("/send-otp")
 async def send_otp(
@@ -489,15 +491,12 @@ async def send_otp(
         db.commit()
         
         # Send email
-        email_sent = EmailService.send_otp_email(email, otp_code, purpose)
-        
-        if not email_sent:
-            logger.warning(f"Failed to send OTP email to {email}, but OTP saved: {otp_code}")
+        EmailService.send_otp_email(email, otp_code, purpose)
         
         return {
             "success": True,
             "message": "OTP sent successfully",
-            "expires_in": 600  # 10 minutes in seconds
+            "expires_in": 600
         }
         
     except HTTPException:
@@ -626,8 +625,25 @@ async def complete_registration(
                 detail="Super admin registration not allowed"
             )
         
-        # Create user
+        # Create a tenant for this user
+        tenant_name = f"{user_data.name}'s Business"
+        subdomain = f"{user_data.email.split('@')[0]}_{int(datetime.now().timestamp())}"
+        
+        new_tenant = Tenant(
+            name=tenant_name,
+            subdomain=subdomain,
+            business_type="shop",
+            status=TenantStatus.ACTIVE.value,
+            created_at=datetime.now()
+        )
+        db.add(new_tenant)
+        db.flush()
+        tenant_id = new_tenant.id
+        logger.info(f"✅ Created new tenant {tenant_id}: {tenant_name}")
+        
+        # Create user with tenant_id
         user = User(
+            tenant_id=tenant_id,
             name=user_data.name,
             email=user_data.email,
             password_hash=AuthService.get_password_hash(user_data.password),
@@ -639,17 +655,17 @@ async def complete_registration(
         db.commit()
         db.refresh(user)
         
-        logger.info(f"✅ User registered successfully: {user.email}")
+        logger.info(f"✅ User registered successfully: {user.email} (Tenant: {tenant_id})")
         return UserResponse.model_validate(user)
         
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Complete registration error: {str(e)}")
+        logger.error(f"Complete registration error: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to complete registration"
+            detail=f"Failed to complete registration: {str(e)}"
         )
 
 
