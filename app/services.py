@@ -1510,75 +1510,89 @@ class ReportService:
         }
         
         
- # ==================== EMAIL SERVICE (BRAVO) ====================
+ # ==================== EMAIL SERVICE (BREVO) ====================
 class EmailService:
-    """Service for sending emails using Bravo Email Service"""
-    
-    # Bravo API Configuration
-    BRAVO_API_URL = os.getenv("BRAVO_API_URL", "https://api.bravo.com/v1/email/send")
-    BRAVO_API_KEY = os.getenv("BRAVO_API_KEY", "")
-    BRAVO_FROM_EMAIL = os.getenv("BRAVO_FROM_EMAIL", "noreply@inventorysystem.com")
-    BRAVO_FROM_NAME = os.getenv("BRAVO_FROM_NAME", "Inventory System")
+    """Service for sending emails using Brevo Email Service (formerly Sendinblue)"""
     
     @classmethod
     def send_otp_email(cls, to_email: str, otp_code: str, purpose: str = "verification") -> bool:
         """
-        Send OTP code via Bravo email service - Simplified version without logger dependency
+        Send OTP code via Brevo email service
         """
-        # Simple print statements - these will appear in Railway logs
-        print(f"📧 OTP EMAIL - To: {to_email}")
-        print(f"📧 OTP CODE: {otp_code}")
-        print(f"📧 Purpose: {purpose}")
-        print(f"📧 API Key configured: {'Yes' if cls.BRAVO_API_KEY else 'No'}")
+        import os
+        import httpx
         
-        # If API key is configured, try to send real email
-        if cls.BRAVO_API_KEY:
-            try:
-                import httpx
-                import json
-                
-                subject = f"Your {purpose.replace('_', ' ').title()} Code - Inventory System"
-                
-                # Simple HTML email
-                html_content = f"""
-                <!DOCTYPE html>
-                <html>
-                <head><title>Verification Code</title></head>
-                <body style="font-family: Arial, sans-serif;">
+        # Get Brevo configuration from environment - using CORRECT variable names
+        brevo_api_key = os.getenv("BREVO_API_KEY", "")
+        brevo_sender_email = os.getenv("BREVO_SENDER_EMAIL", "")
+        brevo_sender_name = os.getenv("BREVO_SENDER_NAME", "Inventory System")
+        brevo_api_url = os.getenv("BRAVO_API_URL", "https://api.brevo.com/v3/smtp/email")  # Brevo API endpoint
+        
+        # Debug: Print what we found (remove in production)
+        print(f"🔧 Brevo API Key: {'Set' if brevo_api_key else 'NOT SET'}")
+        print(f"🔧 Sender Email: {brevo_sender_email if brevo_sender_email else 'NOT SET'}")
+        
+        # If no API key, log OTP for development
+        if not brevo_api_key:
+            print(f"⚠️ Brevo API not configured. OTP email not sent.")
+            print(f"📧 OTP for {to_email}: {otp_code}")
+            return True
+        
+        subject = f"Your {purpose.replace('_', ' ').title()} Code - Inventory System"
+        
+        # Prepare payload for Brevo API (v3 SMTP endpoint)
+        payload = {
+            "sender": {
+                "name": brevo_sender_name,
+                "email": brevo_sender_email
+            },
+            "to": [
+                {
+                    "email": to_email,
+                    "name": to_email.split('@')[0]
+                }
+            ],
+            "subject": subject,
+            "htmlContent": f"""
+            <!DOCTYPE html>
+            <html>
+            <head><title>Verification Code</title></head>
+            <body style="font-family: Arial, sans-serif; text-align: center;">
+                <div style="max-width: 500px; margin: 0 auto; padding: 20px;">
                     <h2 style="color: #2FB8A6;">Inventory System</h2>
                     <p>Your verification code is:</p>
-                    <h1 style="font-size: 48px; color: #2FB8A6; letter-spacing: 5px;">{otp_code}</h1>
-                    <p>This code expires in 10 minutes.</p>
+                    <div style="font-size: 48px; font-weight: bold; color: #2FB8A6; letter-spacing: 5px; padding: 20px; background: #f0fdfa; border-radius: 10px;">
+                        {otp_code}
+                    </div>
+                    <p>This code expires in <strong>10 minutes</strong>.</p>
                     <p>If you didn't request this, please ignore this email.</p>
-                    <hr>
-                    <p style="font-size: 12px; color: #999;">Inventory System - Smart Stock Management Platform</p>
-                </body>
-                </html>
-                """
-                
-                payload = {
-                    "to": to_email,
-                    "from_email": cls.BRAVO_FROM_EMAIL,
-                    "from_name": cls.BRAVO_FROM_NAME,
-                    "subject": subject,
-                    "html_content": html_content,
-                    "text_content": f"Your verification code is: {otp_code}\n\nThis code expires in 10 minutes."
-                }
-                
-                headers = {
-                    "Authorization": f"Bearer {cls.BRAVO_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                
-                with httpx.Client(timeout=30.0) as client:
-                    response = client.post(cls.BRAVO_API_URL, json=payload, headers=headers)
-                    if response.status_code in [200, 201, 202]:
-                        print(f"✅ Email sent successfully to {to_email}")
-                    else:
-                        print(f"⚠️ Email API returned {response.status_code}, but OTP is still valid")
-                        
-            except Exception as e:
-                print(f"⚠️ Failed to send email: {str(e)} - OTP is still valid")
+                </div>
+            </body>
+            </html>
+            """,
+            "textContent": f"Your verification code is: {otp_code}\n\nThis code expires in 10 minutes."
+        }
         
-        # Always return True to allow registration to proceed
-        return True
+        headers = {
+            "api-key": brevo_api_key,  # Brevo uses "api-key" header (not Bearer)
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(brevo_api_url, json=payload, headers=headers)
+                
+                if response.status_code in [200, 201, 202]:
+                    print(f"✅ OTP email sent to {to_email} via Brevo")
+                    return True
+                else:
+                    print(f"❌ Brevo API error: {response.status_code}")
+                    print(f"Response: {response.text}")
+                    print(f"📧 OTP for {to_email}: {otp_code}")
+                    return True
+                    
+        except Exception as e:
+            print(f"❌ Failed to send email: {str(e)}")
+            print(f"📧 OTP for {to_email}: {otp_code}")
+            return True
