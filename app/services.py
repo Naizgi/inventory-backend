@@ -1511,49 +1511,195 @@ class ReportService:
         
         
  # ==================== EMAIL SERVICE (BREVO) ====================
+# ==================== EMAIL SERVICE (BREVO) ====================
 class EmailService:
     """Service for sending emails using Brevo Email Service (formerly Sendinblue)"""
     
     @classmethod
-    def send_otp_email(cls, to_email: str, otp_code: str, purpose: str = "verification") -> bool:
-        """
-        Send OTP code via Brevo email service
-        """
+    def _get_brevo_config(cls):
+        """Get Brevo configuration from environment"""
+        import os
+        return {
+            "api_key": os.getenv("BREVO_API_KEY", ""),
+            "sender_email": os.getenv("BREVO_SENDER_EMAIL", ""),
+            "sender_name": os.getenv("BREVO_SENDER_NAME", "Inventory System"),
+            "api_url": os.getenv("BRAVO_API_URL", "https://api.brevo.com/v3/smtp/email")
+        }
+    
+    @classmethod
+    def _send_email(cls, to_emails: List[str], subject: str, html_content: str, text_content: str = "") -> bool:
+        """Send email via Brevo API using httpx"""
         import os
         import httpx
         
-        # Get Brevo configuration from environment - using CORRECT variable names
-        brevo_api_key = os.getenv("BREVO_API_KEY", "")
-        brevo_sender_email = os.getenv("BREVO_SENDER_EMAIL", "")
-        brevo_sender_name = os.getenv("BREVO_SENDER_NAME", "Inventory System")
-        brevo_api_url = os.getenv("BRAVO_API_URL", "https://api.brevo.com/v3/smtp/email")  # Brevo API endpoint
+        config = cls._get_brevo_config()
         
-        # Debug: Print what we found (remove in production)
-        print(f"🔧 Brevo API Key: {'Set' if brevo_api_key else 'NOT SET'}")
-        print(f"🔧 Sender Email: {brevo_sender_email if brevo_sender_email else 'NOT SET'}")
+        if not config["api_key"] or not config["sender_email"]:
+            print(f"⚠️ Brevo not configured. Would send email to {to_emails}: {subject}")
+            return False
         
-        # If no API key, log OTP for development
-        if not brevo_api_key:
-            print(f"⚠️ Brevo API not configured. OTP email not sent.")
-            print(f"📧 OTP for {to_email}: {otp_code}")
+        # Check if email sending is enabled
+        email_enabled = os.getenv("EMAIL_ENABLED", "true").lower() == "true"
+        if not email_enabled:
+            print(f"📧 Email disabled. Would send to {to_emails}: {subject}")
             return True
         
-        subject = f"Your {purpose.replace('_', ' ').title()} Code - Inventory System"
+        # Prepare recipients
+        recipients = [{"email": email, "name": email.split('@')[0]} for email in to_emails if email]
         
-        # Prepare payload for Brevo API (v3 SMTP endpoint)
+        if not recipients:
+            print(f"❌ No valid recipients")
+            return False
+        
         payload = {
             "sender": {
-                "name": brevo_sender_name,
-                "email": brevo_sender_email
+                "name": config["sender_name"],
+                "email": config["sender_email"]
             },
-            "to": [
-                {
-                    "email": to_email,
-                    "name": to_email.split('@')[0]
-                }
-            ],
+            "to": recipients,
             "subject": subject,
-            "htmlContent": f"""
+            "htmlContent": html_content,
+            "textContent": text_content or subject
+        }
+        
+        headers = {
+            "api-key": config["api_key"],
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(config["api_url"], json=payload, headers=headers)
+                
+                if response.status_code in [200, 201, 202]:
+                    print(f"✅ Email sent to {len(recipients)} recipient(s): {subject}")
+                    return True
+                else:
+                    print(f"❌ Brevo API error {response.status_code}: {response.text}")
+                    return False
+                    
+        except Exception as e:
+            print(f"❌ Failed to send email: {str(e)}")
+            return False
+    
+    @classmethod
+    def _render_template(cls, template_name: str, context: dict) -> str:
+        """Render email template with proper HTML styling"""
+        
+        # Sale notification template
+        if template_name == "sale_notification":
+            return f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>New Sale Alert</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }}
+                    .container {{ max-width: 600px; margin: 20px auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                    .header {{ background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%); color: white; padding: 30px; text-align: center; }}
+                    .header h1 {{ margin: 0; font-size: 24px; }}
+                    .content {{ padding: 30px; }}
+                    .detail {{ background: #f8f9fa; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #28a745; }}
+                    .label {{ font-weight: bold; width: 120px; display: inline-block; }}
+                    .total {{ font-size: 20px; font-weight: bold; color: #28a745; text-align: right; margin-top: 20px; padding-top: 10px; border-top: 2px solid #dee2e6; }}
+                    .footer {{ background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header"><h1>🛍️ New Sale Alert!</h1></div>
+                    <div class="content">
+                        <div class="detail"><span class="label">Sale ID:</span> #{context.get('sale_id', 'N/A')}</div>
+                        <div class="detail"><span class="label">Customer:</span> {context.get('customer_name', 'Walk-in Customer')}</div>
+                        <div class="detail"><span class="label">Items Sold:</span> {context.get('item_count', 0)}</div>
+                        <div class="detail"><span class="label">Sold By:</span> {context.get('salesman_name', 'Unknown')}</div>
+                        <div class="detail"><span class="label">Branch:</span> {context.get('branch_name', 'Unknown')}</div>
+                        <div class="detail"><span class="label">Time:</span> {context.get('created_at', 'N/A')}</div>
+                        <div class="total">Total Amount: ETB {context.get('total_amount', '0.00')}</div>
+                    </div>
+                    <div class="footer"><p>Inventory System - Automated Notification</p></div>
+                </div>
+            </body>
+            </html>
+            """
+        
+        # Low stock alert template
+        elif template_name == "low_stock":
+            return f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Low Stock Alert</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }}
+                    .container {{ max-width: 600px; margin: 20px auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                    .header {{ background: linear-gradient(135deg, #ff9800 0%, #e65100 100%); color: white; padding: 30px; text-align: center; }}
+                    .content {{ padding: 30px; }}
+                    .alert-detail {{ background: #fff3e0; padding: 15px; margin: 10px 0; border-radius: 5px; border-left: 4px solid #ff9800; }}
+                    .label {{ font-weight: bold; width: 120px; display: inline-block; }}
+                    .warning {{ background: #ffeaa7; padding: 15px; margin: 20px 0; border-radius: 5px; text-align: center; color: #d63031; font-weight: bold; }}
+                    .footer {{ background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header"><h1>⚠️ Low Stock Alert</h1></div>
+                    <div class="content">
+                        <div class="alert-detail"><span class="label">Product:</span> {context.get('product_name', 'N/A')}</div>
+                        <div class="alert-detail"><span class="label">SKU:</span> {context.get('product_sku', 'N/A')}</div>
+                        <div class="alert-detail"><span class="label">Branch:</span> {context.get('branch_name', 'N/A')}</div>
+                        <div class="alert-detail"><span class="label">Current Stock:</span> <strong style="color: #ff9800;">{context.get('current_stock', 0)} units</strong></div>
+                        <div class="alert-detail"><span class="label">Reorder Level:</span> {context.get('reorder_level', 0)} units</div>
+                        <div class="warning">⚠️ Please reorder this product as soon as possible!</div>
+                    </div>
+                    <div class="footer"><p>Inventory System - Automated Alert</p></div>
+                </div>
+            </body>
+            </html>
+            """
+        
+        # Daily report template
+        elif template_name == "daily_report":
+            return f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <title>Daily Sales Report</title>
+                <style>
+                    body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }}
+                    .container {{ max-width: 600px; margin: 20px auto; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+                    .header {{ background: linear-gradient(135deg, #2FB8A6 0%, #259e8e 100%); color: white; padding: 30px; text-align: center; }}
+                    .content {{ padding: 30px; }}
+                    .summary {{ background: #e8f5e9; padding: 20px; border-radius: 8px; margin: 20px 0; }}
+                    .summary-item {{ margin: 10px 0; font-size: 16px; }}
+                    .summary-value {{ color: #2e7d32; font-size: 20px; font-weight: bold; }}
+                    .footer {{ background: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header"><h1>📊 Daily Sales Report</h1><p>{context.get('date', 'N/A')}</p></div>
+                    <div class="content">
+                        <div class="summary">
+                            <div class="summary-item">📈 Total Sales: <span class="summary-value">{context.get('total_sales', 0)}</span></div>
+                            <div class="summary-item">💰 Gross Revenue: <span class="summary-value">ETB {context.get('total_revenue', 0):,.2f}</span></div>
+                            <div class="summary-item">🔄 Refunds: <span class="summary-value">ETB {context.get('total_refunds', 0):,.2f}</span></div>
+                            <div class="summary-item">✅ Net Revenue: <span class="summary-value">ETB {context.get('net_revenue', 0):,.2f}</span></div>
+                        </div>
+                    </div>
+                    <div class="footer"><p>Inventory System - Daily Report</p></div>
+                </div>
+            </body>
+            </html>
+            """
+        
+        # OTP template (from your existing code)
+        elif template_name == "otp":
+            return f"""
             <!DOCTYPE html>
             <html>
             <head><title>Verification Code</title></head>
@@ -1562,37 +1708,89 @@ class EmailService:
                     <h2 style="color: #2FB8A6;">Inventory System</h2>
                     <p>Your verification code is:</p>
                     <div style="font-size: 48px; font-weight: bold; color: #2FB8A6; letter-spacing: 5px; padding: 20px; background: #f0fdfa; border-radius: 10px;">
-                        {otp_code}
+                        {context.get('otp_code', 'N/A')}
                     </div>
                     <p>This code expires in <strong>10 minutes</strong>.</p>
                     <p>If you didn't request this, please ignore this email.</p>
                 </div>
             </body>
             </html>
-            """,
-            "textContent": f"Your verification code is: {otp_code}\n\nThis code expires in 10 minutes."
-        }
+            """
         
-        headers = {
-            "api-key": brevo_api_key,  # Brevo uses "api-key" header (not Bearer)
-            "Content-Type": "application/json",
-            "Accept": "application/json"
+        # Default template
+        else:
+            return f"""
+            <!DOCTYPE html>
+            <html>
+            <head><title>{context.get('subject', 'Notification')}</title></head>
+            <body style="font-family: Arial, sans-serif;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                    <h2 style="color: #2FB8A6;">{context.get('subject', 'Notification')}</h2>
+                    <p>{context.get('message', 'Email content')}</p>
+                    <hr>
+                    <p style="font-size: 12px; color: #666;">Inventory System - Automated Message</p>
+                </div>
+            </body>
+            </html>
+            """
+    
+    @classmethod
+    def send_otp_email(cls, to_email: str, otp_code: str, purpose: str = "verification") -> bool:
+        """Send OTP code via Brevo email service"""
+        context = {"otp_code": otp_code, "purpose": purpose}
+        subject = f"Your {purpose.replace('_', ' ').title()} Code - Inventory System"
+        html_content = cls._render_template("otp", context)
+        return cls._send_email([to_email], subject, html_content)
+    
+    @classmethod
+    def send_sale_notification(cls, to_emails: List[str], sale_data: dict) -> bool:
+        """Send sale notification email to admins"""
+        print(f"🔵 Sending sale notification to {len(to_emails)} admins...")
+        context = {
+            "sale_id": sale_data.get("sale_id"),
+            "customer_name": sale_data.get("customer_name", "Walk-in Customer"),
+            "total_amount": f"{sale_data.get('total_amount', 0):,.2f}",
+            "item_count": sale_data.get("item_count", 0),
+            "salesman_name": sale_data.get("salesman_name", "Unknown"),
+            "branch_name": sale_data.get("branch_name", "Unknown"),
+            "created_at": sale_data.get("created_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         }
-        
-        try:
-            with httpx.Client(timeout=30.0) as client:
-                response = client.post(brevo_api_url, json=payload, headers=headers)
-                
-                if response.status_code in [200, 201, 202]:
-                    print(f"✅ OTP email sent to {to_email} via Brevo")
-                    return True
-                else:
-                    print(f"❌ Brevo API error: {response.status_code}")
-                    print(f"Response: {response.text}")
-                    print(f"📧 OTP for {to_email}: {otp_code}")
-                    return True
-                    
-        except Exception as e:
-            print(f"❌ Failed to send email: {str(e)}")
-            print(f"📧 OTP for {to_email}: {otp_code}")
-            return True
+        subject = f"🛍️ New Sale Alert - Sale #{sale_data.get('sale_id', 'N/A')}"
+        html_content = cls._render_template("sale_notification", context)
+        return cls._send_email(to_emails, subject, html_content)
+    
+    @classmethod
+    def send_low_stock_alert(cls, to_emails: List[str], product_name: str, product_sku: str, 
+                              current_stock: float, reorder_level: float, branch_name: str) -> bool:
+        """Send low stock alert email to admins"""
+        context = {
+            "product_name": product_name,
+            "product_sku": product_sku,
+            "current_stock": current_stock,
+            "reorder_level": reorder_level,
+            "branch_name": branch_name,
+        }
+        subject = f"⚠️ Low Stock Alert: {product_name}"
+        html_content = cls._render_template("low_stock", context)
+        return cls._send_email(to_emails, subject, html_content)
+    
+    @classmethod
+    def send_daily_report(cls, to_emails: List[str], report_data: dict) -> bool:
+        """Send daily sales report to admins"""
+        context = {
+            "date": report_data.get("date", datetime.now().strftime("%Y-%m-%d")),
+            "total_sales": report_data.get("total_sales", 0),
+            "total_revenue": report_data.get("total_revenue", 0),
+            "total_refunds": report_data.get("total_refunds", 0),
+            "net_revenue": report_data.get("net_revenue", 0),
+        }
+        subject = f"📊 Daily Report - {context['date']}"
+        html_content = cls._render_template("daily_report", context)
+        return cls._send_email(to_emails, subject, html_content)
+    
+    @classmethod
+    def send_general_notification(cls, to_emails: List[str], subject: str, message: str) -> bool:
+        """Send general notification email"""
+        context = {"subject": subject, "message": message}
+        html_content = cls._render_template("general", context)
+        return cls._send_email(to_emails, subject, html_content)
