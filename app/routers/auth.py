@@ -341,54 +341,31 @@ async def get_current_user_profile(
     return user_data
 
 
-@router.put("/me", response_model=UserResponse)
-async def update_profile(
-    profile_data: UserProfileUpdate,
+@router.get("/me", response_model=UserResponse)
+async def get_current_user_profile(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
     """
-    Update current user profile.
+    Get current user profile with subscription info.
     """
-    try:
-        update_data = profile_data.model_dump(exclude_unset=True)
-        
-        # Check email uniqueness
-        if "email" in update_data and update_data["email"] != current_user.email:
-            existing = db.query(User).filter(
-                User.email == update_data["email"],
-                User.id != current_user.id
-            ).first()
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already in use"
-                )
-        
-        # Update password if provided
-        if "password" in update_data:
-            current_user.password_hash = AuthService.get_password_hash(update_data.pop("password"))
-        
-        # Update other fields
-        for key, value in update_data.items():
-            if hasattr(current_user, key):
-                setattr(current_user, key, value)
-        
-        db.commit()
-        db.refresh(current_user)
-        
-        return UserResponse.model_validate(current_user)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Profile update error: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update profile"
-        )
-
+    user_data = UserResponse.model_validate(current_user)
+    
+    # Add subscription info for tenant users
+    if current_user.tenant_id:
+        subscription = get_subscription_status(current_user.tenant_id, db)
+        # Convert to dict if it's a Pydantic model
+        if hasattr(subscription, 'model_dump'):
+            user_data.subscription = subscription.model_dump()
+        elif hasattr(subscription, 'dict'):
+            user_data.subscription = subscription.dict()
+        elif isinstance(subscription, dict):
+            user_data.subscription = subscription
+        else:
+            # Fallback: try to convert to dict
+            user_data.subscription = dict(subscription) if subscription else None
+    
+    return user_data
 
 @router.post("/change-password")
 async def change_password(

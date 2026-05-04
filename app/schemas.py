@@ -575,6 +575,10 @@ class User(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 class UserResponse(User):
+    subscription: Optional[Dict[str, Any]] = None  # Add this field
+    tenant_status: Optional[str] = None  # Optional: add tenant status too
+    
+    model_config = ConfigDict(from_attributes=True)
     pass
 
 
